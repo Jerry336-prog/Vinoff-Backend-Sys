@@ -8,6 +8,69 @@ import { createInvoiceForOrder } from "./invoiceService.js";
 import { notifyAdmins, notifyUser, logActivity } from "./notificationService.js";
 import { uploadBuffer } from "./cloudinaryService.js";
 
+const reserveInventory = async (requirements, productMap) => {
+  const appliedAdjustments = [];
+
+  try {
+    // Pre-flight check: verify sufficient stock before touching the DB
+    for (const requirement of requirements.values()) {
+      const product = productMap.get(requirement.productId);
+      const available = Number(product?.[requirement.field] ?? 0);
+      const label = requirement.field === "stock" ? "carton" : "loose-unit";
+
+      if (available < requirement.quantity) {
+        throw new Error(
+          `Insufficient ${label} stock for '${product?.name || "product"}'. ` +
+            `Available: ${available}, requested: ${requirement.quantity}.`
+        );
+      }
+    }
+
+    // Apply deductions directly in the DB
+    for (const requirement of requirements.values()) {
+      const product = productMap.get(requirement.productId);
+
+      const updatedProduct = await Product.findOneAndUpdate(
+        { _id: requirement.productId },
+        { $inc: { [requirement.field]: -requirement.quantity } },
+        { new: true }
+      );
+
+      if (!updatedProduct) {
+        throw new Error(
+          `Product '${product?.name || "product"}' not found during stock deduction.`
+        );
+      }
+
+      appliedAdjustments.push(requirement);
+    }
+  } catch (error) {
+    // Rollback all already-applied deductions
+    await Promise.all(
+      appliedAdjustments.map((adj) =>
+        Product.updateOne(
+          { _id: adj.productId },
+          { $inc: { [adj.field]: adj.quantity } }
+        )
+      )
+    );
+    throw error;
+  }
+
+  return appliedAdjustments;
+};
+
+const restoreInventory = async (adjustments) => {
+  await Promise.all(
+    adjustments.map((adjustment) =>
+      Product.updateOne(
+        { _id: adjustment.productId },
+        { $inc: { [adjustment.field]: adjustment.quantity } }
+      )
+    )
+  );
+};
+
 /**
  * Creates a wholesale order
  */
@@ -27,6 +90,7 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
 
   let subtotal = 0;
   const processedItems = [];
+  const inventoryRequirements = new Map();
 
   for (const item of items) {
     const pId = (item.productId || item.product).toString();
@@ -63,6 +127,16 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     const itemSubtotal = unitPrice * quantity;
     subtotal += itemSubtotal;
 
+    const inventoryField = isCarton ? "stock" : "unitStock";
+    const inventoryKey = `${product._id}:${inventoryField}`;
+    const existingRequirement = inventoryRequirements.get(inventoryKey);
+    inventoryRequirements.set(inventoryKey, {
+      productId: product._id.toString(),
+      field: inventoryField,
+      label: isCarton ? "carton" : "loose-unit",
+      quantity: (existingRequirement?.quantity || 0) + quantity,
+    });
+
     processedItems.push({
       product: product._id,
       name: displayName,
@@ -77,20 +151,27 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     });
   }
 
+  const inventoryAdjustments = await reserveInventory(inventoryRequirements, productMap);
   const orderNumber = generateOrderNumber();
   const totalAmount = subtotal + Number(deliveryFee);
+  let order;
 
-  const order = await Order.create({
-    orderNumber,
-    customer: customerId,
-    items: processedItems,
-    subtotal,
-    deliveryFee: Number(deliveryFee),
-    totalAmount,
-    status: "Pending Payment",
-    paymentStatus: "Pending",
-    notes,
-  });
+  try {
+    order = await Order.create({
+      orderNumber,
+      customer: customerId,
+      items: processedItems,
+      subtotal,
+      deliveryFee: Number(deliveryFee),
+      totalAmount,
+      status: "Pending Payment",
+      paymentStatus: "Pending",
+      notes,
+    });
+  } catch (error) {
+    await restoreInventory(inventoryAdjustments);
+    throw error;
+  }
 
   // Automatically create invoice
   const invoice = await createInvoiceForOrder(order);

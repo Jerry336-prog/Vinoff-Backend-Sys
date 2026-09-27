@@ -141,6 +141,7 @@ export const createProduct = async (req, res, next) => {
       minimumQuantity: minimumQuantity ? Number(minimumQuantity) : 1,
       stock: stock !== undefined ? Number(stock) : 0,
       unitStock: unitStock !== undefined ? Number(unitStock) : 0,
+      trackUnitStock: unitStock !== undefined && Number(unitStock) > 0,
       unit: unit ? unit.trim() : "carton",
       featured: featured === true || featured === "true",
       status: status || "active",
@@ -174,6 +175,12 @@ export const updateProduct = async (req, res, next) => {
     }
 
     const updateFields = { ...req.body };
+
+    // Once an admin stocks loose units, retain that mode even when it reaches zero.
+    if (Object.prototype.hasOwnProperty.call(updateFields, "unitStock")) {
+      updateFields.unitStock = Number(updateFields.unitStock);
+      updateFields.trackUnitStock = true;
+    }
 
     // Handle new images uploaded
     if (req.files && req.files.length > 0) {

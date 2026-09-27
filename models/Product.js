@@ -56,6 +56,10 @@ const productSchema = new mongoose.Schema(
       default: 0,
       min: [0, "Loose unit stock cannot be negative"],
     },
+    trackUnitStock: {
+      type: Boolean,
+      default: false,
+    },
     unit: {
       type: String,
       default: "carton",
