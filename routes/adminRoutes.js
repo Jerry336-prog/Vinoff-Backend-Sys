@@ -9,11 +9,13 @@ import expenseController from "../controllers/expenseController.js";
 import announcementController from "../controllers/announcementController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin } from "../middleware/adminMiddleware.js";
+import { idempotency } from "../middleware/idempotencyMiddleware.js";
+import { adminWriteLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router();
 
 // Apply auth and admin checks across all admin routes
-router.use(protect, adminOrSubAdmin);
+router.use(protect, adminOrSubAdmin, adminWriteLimiter, idempotency);
 
 // Dashboard
 router.get("/dashboard", adminController.getDashboardStats);
@@ -61,4 +63,3 @@ router.patch("/announcements/:id/status", announcementController.updateAnnouncem
 router.delete("/announcements/:id", announcementController.deleteAnnouncement);
 
 export default router;
-
