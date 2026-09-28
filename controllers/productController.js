@@ -70,7 +70,7 @@ export const getProductById = async (req, res, next) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) {
-      return errorResponse(res, 404, "Product not found");
+      return errorResponse(res, 404, "Product not found!");
     }
     return successResponse(res, 200, "Product retrieved successfully", product);
   } catch (error) {
