@@ -81,7 +81,7 @@ export const getOrderById = async (req, res, next) => {
       .populate("invoice");
 
     if (!order) {
-      return errorResponse(res, 404, "Order not found");
+      return errorResponse(res, 404, "Order not found!");
     }
 
     // Customer can only view their own orders
