@@ -1,5 +1,5 @@
 import { Visit } from "../models/Visit.js";
-import { successResponse, errorResponse } from "../utils/apiResponse.js";
+import { successResponse, errorResponse } from "../utils/response.js";
 
 /**
  * Normalizes referrer or utm params into a clean source label
