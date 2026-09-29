@@ -96,6 +96,8 @@ export const createProduct = async (req, res, next) => {
       unit,
       featured,
       status,
+      allowCarton,
+      allowPieces,
     } = req.body;
 
     const uploadedImages = [];
@@ -143,6 +145,8 @@ export const createProduct = async (req, res, next) => {
       unitStock: unitStock !== undefined ? Number(unitStock) : 0,
       trackUnitStock: unitStock !== undefined && Number(unitStock) > 0,
       unit: unit ? unit.trim() : "carton",
+      allowCarton: allowCarton !== undefined ? (allowCarton === true || allowCarton === "true") : true,
+      allowPieces: allowPieces !== undefined ? (allowPieces === true || allowPieces === "true") : true,
       featured: featured === true || featured === "true",
       status: status || "active",
       createdBy: req.user._id,
@@ -201,8 +205,15 @@ export const updateProduct = async (req, res, next) => {
       delete updateFields.images;
     }
 
+    if (updateFields.allowCarton !== undefined) {
+      updateFields.allowCarton = updateFields.allowCarton === true || updateFields.allowCarton === "true";
+    }
+    if (updateFields.allowPieces !== undefined) {
+      updateFields.allowPieces = updateFields.allowPieces === true || updateFields.allowPieces === "true";
+    }
+
     Object.assign(product, updateFields);
-    await product.save();
+    await product.save({ validateModifiedOnly: true });
 
     await logActivity({
       actorId: req.user._id,
@@ -213,6 +224,52 @@ export const updateProduct = async (req, res, next) => {
     });
 
     return successResponse(res, 200, "Product updated successfully", product);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Bulk update ordering format (Cartons vs Pieces) for selected or all products
+ * PATCH /api/products/bulk/ordering-format
+ */
+export const bulkUpdateOrderingFormat = async (req, res, next) => {
+  try {
+    const { productIds, allowCarton, allowPieces, applyToAll } = req.body;
+
+    const filter =
+      applyToAll || !productIds || (Array.isArray(productIds) && productIds.length === 0)
+        ? {}
+        : { _id: { $in: productIds } };
+
+    const update = {};
+    if (allowCarton !== undefined) {
+      update.allowCarton = allowCarton === true || allowCarton === "true";
+    }
+    if (allowPieces !== undefined) {
+      update.allowPieces = allowPieces === true || allowPieces === "true";
+    }
+
+    if (Object.keys(update).length === 0) {
+      return errorResponse(res, 400, "No format changes specified");
+    }
+
+    const result = await Product.updateMany(filter, { $set: update });
+
+    await logActivity({
+      actorId: req.user._id,
+      action: "Admin bulk updated ordering format",
+      targetType: "Product",
+      description: `Bulk updated ordering format: Cartons=${update.allowCarton ?? "unchanged"}, Pieces=${update.allowPieces ?? "unchanged"} (${result.modifiedCount} updated)`,
+      metadata: { filter, update, modifiedCount: result.modifiedCount },
+    });
+
+    return successResponse(
+      res,
+      200,
+      `Successfully updated ordering format for ${result.modifiedCount} product(s)`,
+      { modifiedCount: result.modifiedCount, update }
+    );
   } catch (error) {
     next(error);
   }
@@ -257,5 +314,6 @@ export default {
   getProductById,
   createProduct,
   updateProduct,
+  bulkUpdateOrderingFormat,
   deleteProduct,
 };

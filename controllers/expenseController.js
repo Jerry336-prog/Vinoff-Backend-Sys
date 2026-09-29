@@ -1,4 +1,5 @@
 import ExpenseLedger from "../models/Expense.js";
+import { uploadBuffer } from "../services/cloudinaryService.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -49,8 +50,10 @@ const formatLedger = (ledgerDoc) => {
     status: ledger.closedAt ? "closed" : "open",
     totalIncome,
     totalExpenses,
+    totalExpense: totalExpenses,
     closingBalance,
     lineItems,
+    evidence: ledger.evidence || [],
     stampedByAdmin,
     stampedAt: ledger.closedAt,
   };
@@ -296,4 +299,93 @@ export const closeDay = async (req, res) => {
   }
 };
 
-export default { getLedgers, getTodayLedger, setupFirstDay, addEntry, removeEntry, closeDay };
+/**
+ * Get a specific day's ledger by YYYY-MM-DD
+ * GET /api/admin/expenses/day/:date
+ */
+export const getLedgerByDate = async (req, res) => {
+  try {
+    const { date } = req.params;
+    const ledger = await ExpenseLedger.findOne({ date })
+      .populate("closedBy", "firstName lastName email")
+      .lean();
+
+    if (!ledger) {
+      return res.status(404).json({ success: false, message: "No expense ledger found for this date." });
+    }
+
+    return res.json({ success: true, data: formatLedger(ledger) });
+  } catch (err) {
+    console.error("[expenseController.getLedgerByDate]", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+};
+
+/**
+ * Upload receipt/evidence attachments for a specific day's ledger
+ * POST /api/admin/expenses/:date/evidence or /api/admin/expenses/evidence
+ */
+export const uploadEvidence = async (req, res) => {
+  try {
+    const key = req.params.date || req.body.date || todayKey();
+    let ledger = await ExpenseLedger.findOne({ date: key });
+
+    if (!ledger) {
+      ledger = await ExpenseLedger.create({ date: key, openingBalance: 0 });
+    }
+
+    const uploaded = [];
+
+    if (req.files && req.files.length > 0) {
+      for (const file of req.files) {
+        const uploadResult = await uploadBuffer(file.buffer, "vinoff_expenses", {
+          resource_type: "auto",
+        });
+        uploaded.push({
+          url: uploadResult.url,
+          filename: file.originalname || "evidence_receipt",
+          uploadedAt: new Date(),
+        });
+      }
+    } else if (req.file) {
+      const uploadResult = await uploadBuffer(req.file.buffer, "vinoff_expenses", {
+        resource_type: "auto",
+      });
+      uploaded.push({
+        url: uploadResult.url,
+        filename: req.file.originalname || "evidence_receipt",
+        uploadedAt: new Date(),
+      });
+    }
+
+    if (uploaded.length > 0) {
+      if (!ledger.evidence) ledger.evidence = [];
+      ledger.evidence.push(...uploaded);
+      await ledger.save();
+    }
+
+    const updated = await ExpenseLedger.findById(ledger._id)
+      .populate("closedBy", "firstName lastName email")
+      .lean();
+
+    return res.json({
+      success: true,
+      message: `${uploaded.length} evidence file(s) attached successfully`,
+      data: formatLedger(updated),
+    });
+  } catch (err) {
+    console.error("[expenseController.uploadEvidence]", err);
+    return res.status(500).json({ success: false, message: err.message || "Server error" });
+  }
+};
+
+export default {
+  getLedgers,
+  getTodayLedger,
+  getLedgerByDate,
+  setupFirstDay,
+  addEntry,
+  removeEntry,
+  closeDay,
+  uploadEvidence,
+};

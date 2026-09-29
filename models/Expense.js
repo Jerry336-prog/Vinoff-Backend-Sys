@@ -42,6 +42,14 @@ const expenseLedgerSchema = new mongoose.Schema(
     },
 
     notes: { type: String, trim: true, default: "" },
+    // Uploaded receipts, payment slips, or documentation for this day
+    evidence: [
+      {
+        url: { type: String, required: true },
+        filename: { type: String, default: "evidence_receipt" },
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true }
 );

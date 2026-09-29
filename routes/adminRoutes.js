@@ -11,6 +11,7 @@ import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin } from "../middleware/adminMiddleware.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
 import { adminWriteLimiter } from "../middleware/rateLimiters.js";
+import { upload } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
@@ -48,9 +49,12 @@ router.get("/activity", adminController.getActivityLogs);
 router.get("/expenses", expenseController.getLedgers);
 router.get("/expenses/history", expenseController.getLedgers);
 router.get("/expenses/today", expenseController.getTodayLedger);
+router.get("/expenses/day/:date", expenseController.getLedgerByDate);
 router.post("/expenses/setup", expenseController.setupFirstDay);
 router.post("/expenses/item", expenseController.addEntry);
 router.post("/expenses/today/entry", expenseController.addEntry);
+router.post("/expenses/evidence", upload.array("evidence", 5), expenseController.uploadEvidence);
+router.post("/expenses/:date/evidence", upload.array("evidence", 5), expenseController.uploadEvidence);
 router.delete("/expenses/item/:entryId", expenseController.removeEntry);
 router.delete("/expenses/today/entry/:entryId", expenseController.removeEntry);
 router.post("/expenses/close", expenseController.closeDay);

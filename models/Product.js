@@ -65,6 +65,14 @@ const productSchema = new mongoose.Schema(
       default: "carton",
       trim: true,
     },
+    allowCarton: {
+      type: Boolean,
+      default: true,
+    },
+    allowPieces: {
+      type: Boolean,
+      default: true,
+    },
     status: {
       type: String,
       enum: ["active", "inactive"],

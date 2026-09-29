@@ -27,6 +27,15 @@ router.post(
 );
 
 router.patch(
+  "/bulk/ordering-format",
+  protect,
+  adminOrSubAdmin,
+  productWriteLimiter,
+  idempotency,
+  productController.bulkUpdateOrderingFormat
+);
+
+router.patch(
   "/:id",
   protect,
   adminOrSubAdmin,
