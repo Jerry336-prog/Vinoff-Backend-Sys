@@ -18,6 +18,7 @@ import notificationRoutes from "./routes/notificationRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import announcementRoutes from "./routes/announcementRoutes.js";
 import settingRoutes from "./routes/settingRoutes.js";
+import analyticsRoutes from "./routes/analyticsRoutes.js";
 
 // Middleware
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
@@ -102,6 +103,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/announcements", announcementRoutes);
 app.use("/api/settings", settingRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // Catch 404 & Centralized Error Handler
 app.use(notFound);

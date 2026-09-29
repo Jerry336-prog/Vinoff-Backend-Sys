@@ -7,6 +7,7 @@ import chatController from "../controllers/chatController.js";
 import notificationController from "../controllers/notificationController.js";
 import expenseController from "../controllers/expenseController.js";
 import announcementController from "../controllers/announcementController.js";
+import analyticsController from "../controllers/analyticsController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin } from "../middleware/adminMiddleware.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
@@ -65,5 +66,8 @@ router.post("/announcements", announcementController.createAnnouncement);
 router.get("/announcements", announcementController.getAdminAnnouncements);
 router.patch("/announcements/:id/status", announcementController.updateAnnouncementStatus);
 router.delete("/announcements/:id", announcementController.deleteAnnouncement);
+
+// Traffic Analytics
+router.get("/analytics", analyticsController.getAnalyticsSummary);
 
 export default router;
