@@ -41,16 +41,28 @@ const visitSchema = new mongoose.Schema(
       default: "",
       trim: true,
     },
-    path: {
-      type: String,
-      default: "/",
-      trim: true,
-      index: true,
-    },
     landingPage: {
       type: String,
       default: "/",
       trim: true,
+    },
+    currentPage: {
+      type: String,
+      default: "/",
+      trim: true,
+    },
+    // Track sequence of paths this visitor has entered during their visit
+    pagesVisited: [
+      {
+        path: { type: String, required: true },
+        visitedAt: { type: Date, default: Date.now },
+      },
+    ],
+    // Total pages browsed by this device in this session
+    pageViewsCount: {
+      type: Number,
+      default: 1,
+      min: 1,
     },
     utmSource: {
       type: String,
@@ -90,6 +102,16 @@ const visitSchema = new mongoose.Schema(
     isNewVisitor: {
       type: Boolean,
       default: false,
+      index: true,
+    },
+    firstSeenAt: {
+      type: Date,
+      default: Date.now,
+    },
+    lastSeenAt: {
+      type: Date,
+      default: Date.now,
+      index: true,
     },
   },
   {
@@ -99,9 +121,10 @@ const visitSchema = new mongoose.Schema(
 
 // Compound indexes for analytics aggregation queries
 visitSchema.index({ createdAt: -1 });
-visitSchema.index({ source: 1, createdAt: -1 });
-visitSchema.index({ device: 1, createdAt: -1 });
+visitSchema.index({ lastSeenAt: -1 });
 visitSchema.index({ visitorId: 1, createdAt: -1 });
+visitSchema.index({ sessionId: 1, createdAt: -1 });
+visitSchema.index({ source: 1, createdAt: -1 });
 
 export const Visit = mongoose.model("Visit", visitSchema);
 export default Visit;

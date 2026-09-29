@@ -1,7 +1,7 @@
 import User from "../models/User.js";
 import { sendTokenResponse } from "../services/authService.js";
 import { successResponse, errorResponse } from "../utils/response.js";
-import { logActivity } from "../services/notificationService.js";
+import { logActivity, notifyAdmins } from "../services/notificationService.js";
 
 /**
  * Register a new customer
@@ -35,6 +35,13 @@ export const register = async (req, res, next) => {
       targetType: "User",
       targetId: user._id,
       description: `New customer registered: ${user.firstName} ${user.lastName} (${user.email})`,
+    });
+
+    await notifyAdmins({
+      type: "CUSTOMER_REGISTERED",
+      title: "New Customer Registered",
+      message: `${user.firstName} ${user.lastName} (${user.email}) registered an account`,
+      relatedUser: user._id,
     });
 
     return sendTokenResponse(res, user, 201, "Registration successful");

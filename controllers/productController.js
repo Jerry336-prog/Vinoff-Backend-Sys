@@ -2,7 +2,7 @@ import Product from "../models/Product.js";
 import { uploadBuffer, deleteResource } from "../services/cloudinaryService.js";
 import { getPagination, formatPaginatedResponse } from "../utils/pagination.js";
 import { successResponse, errorResponse } from "../utils/response.js";
-import { logActivity } from "../services/notificationService.js";
+import { logActivity, notifyAdmins } from "../services/notificationService.js";
 
 /**
  * Get all products with search, filter, sort and pagination
@@ -159,6 +159,13 @@ export const createProduct = async (req, res, next) => {
       targetId: product._id,
       description: `Admin created product '${product.name}'`,
       metadata: { productId: product._id, price: product.price, wholesalePrice: product.wholesalePrice },
+    });
+
+    await notifyAdmins({
+      type: "PRODUCT_ADDED",
+      title: "New Product Added",
+      message: `${req.user.firstName || "An admin"} added new product '${product.name}'`,
+      relatedUser: req.user._id,
     });
 
     return successResponse(res, 201, "Product created successfully", product);

@@ -7,6 +7,12 @@ export const NOTIFICATION_TYPES = [
   "NEW_MESSAGE",
   "INVOICE_CREATED",
   "ORDER_STATUS_CHANGED",
+  "PRODUCT_ADDED",
+  "PRODUCT_UPDATED",
+  "CUSTOMER_REGISTERED",
+  "INVENTORY_ALERT",
+  "ANNOUNCEMENT_POSTED",
+  "EXPENSE_LOGGED",
 ];
 
 const notificationSchema = new mongoose.Schema(
