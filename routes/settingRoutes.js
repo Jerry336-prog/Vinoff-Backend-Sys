@@ -14,6 +14,7 @@ import {
   getCategories,
   addCategory,
   removeCategory,
+  testEmailNotification,
 } from "../controllers/settingController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin, superAdminOnly } from "../middleware/adminMiddleware.js";
@@ -55,6 +56,12 @@ router.put(
   adminOrSubAdmin,
   idempotency,
   updateNotificationSettings
+);
+router.post(
+  "/test-email",
+  protect,
+  adminOrSubAdmin,
+  testEmailNotification
 );
 
 // ==========================================

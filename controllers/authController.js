@@ -4,6 +4,7 @@ import { sendTokenResponse } from "../services/authService.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { logActivity, notifyAdmins } from "../services/notificationService.js";
 import { parseClientInfo } from "../utils/deviceParser.js";
+import { sendWelcomeEmail } from "../services/emailService.js";
 
 /**
  * Register a new customer
@@ -60,6 +61,13 @@ export const register = async (req, res, next) => {
       message: `${user.firstName} ${user.lastName} (${user.email}) registered an account`,
       relatedUser: user._id,
     });
+
+    // Send Welcome Email to newly registered customer (async without blocking response)
+    sendWelcomeEmail({
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+    }).catch((err) => console.error("[Welcome Email Error]:", err.message));
 
     return sendTokenResponse(res, user, 201, "Registration successful", sessionId);
   } catch (error) {
