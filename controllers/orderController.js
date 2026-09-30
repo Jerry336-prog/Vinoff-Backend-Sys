@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Order from "../models/Order.js";
 import {
   createOrder as createOrderService,
@@ -76,7 +77,10 @@ export const getOrders = async (req, res, next) => {
  */
 export const getOrderById = async (req, res, next) => {
   try {
-    const order = await Order.findById(req.params.id)
+    const isObjectId = mongoose.isValidObjectId(req.params.id);
+    const query = isObjectId ? { _id: req.params.id } : { orderNumber: req.params.id };
+
+    const order = await Order.findOne(query)
       .populate("customer", "firstName lastName email phone profile")
       .populate("invoice");
 
@@ -84,8 +88,8 @@ export const getOrderById = async (req, res, next) => {
       return errorResponse(res, 404, "Order not found!");
     }
 
-    // Customer can only view their own orders
-    if (req.user.role === "customer" && order.customer._id.toString() !== req.user._id.toString()) {
+    // Customer can only view their own orders; admins/superadmins can view any order
+    if (req.user.role === "customer" && order.customer?._id?.toString() !== req.user._id.toString()) {
       return errorResponse(res, 403, "Access denied. You can only view your own orders.");
     }
 

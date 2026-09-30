@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Order, { ORDER_STATUSES, PAYMENT_STATUSES } from "../models/Order.js";
 import Product from "../models/Product.js";
 import Chat from "../models/Chat.js";
@@ -312,19 +313,17 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     console.error("[WhatsApp Notification Error]:", err.message);
   }
 
-  // Instant Email Ping to Store Owner
-  try {
-    await sendOrderAlertEmail({
-      orderNumber,
-      customerName: `${customer.firstName} ${customer.lastName}`,
-      phone: customer.phone,
-      totalAmount,
-      itemsCount: processedItems.length,
-      items: processedItems,
-    });
-  } catch (emailErr) {
+  // Instant Email Ping to Store Owner and Admins (non-blocking async background)
+  sendOrderAlertEmail({
+    orderNumber,
+    customerName: `${customer.firstName} ${customer.lastName}`,
+    phone: customer.phone,
+    totalAmount,
+    itemsCount: processedItems.length,
+    items: processedItems,
+  }).catch((emailErr) => {
     console.error("[Order Email Dispatch Error]:", emailErr.message);
-  }
+  });
 
   return {
     order,
@@ -339,7 +338,11 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
  * Customer uploads payment screenshot
  */
 export const submitPaymentScreenshot = async ({ orderId, customerId, fileBuffer }) => {
-  const order = await Order.findOne({ _id: orderId, customer: customerId });
+  const isObjectId = mongoose.isValidObjectId(orderId);
+  const query = isObjectId
+    ? { _id: orderId, customer: customerId }
+    : { orderNumber: orderId, customer: customerId };
+  const order = await Order.findOne(query);
   if (!order) {
     throw new Error("Order not found or access denied");
   }

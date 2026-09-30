@@ -23,6 +23,9 @@ const getTransporter = () => {
         user,
         pass,
       },
+      connectionTimeout: 5000, // 5s connection timeout
+      greetingTimeout: 5000,   // 5s greeting timeout
+      socketTimeout: 8000,     // 8s socket timeout
     }),
     user,
   };
@@ -76,6 +79,10 @@ export const sendOrderAlertEmail = async ({
           .join("")
       : `<tr><td colspan="3" style="padding: 8px 4px; color: #64748b;">${itemsCount || 1} product(s) ordered</td></tr>`;
 
+    const clientUrl = (process.env.CLIENT_URL || "https://vinoff-web.vercel.app").replace(/\/+$/, "");
+    const orderPageUrl = `${clientUrl}/orders/${orderNumber}`;
+    const adminDeskUrl = `${clientUrl}/admin/orders?order=${orderNumber}`;
+
     const subject = `📦 NEW ORDER ALERT: #${orderNumber} (₦${Number(totalAmount).toLocaleString()})`;
     const html = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
@@ -121,6 +128,16 @@ export const sendOrderAlertEmail = async ({
           </table>
         </div>
 
+        <div style="margin: 28px 0; text-align: center;">
+          <a href="${orderPageUrl}" style="display: inline-block; background-color: #15803d; color: #ffffff; text-decoration: none; padding: 13px 26px; border-radius: 12px; font-weight: 800; font-size: 14px; margin-bottom: 8px;">
+            View Order #${orderNumber} &rarr;
+          </a>
+          <br/>
+          <a href="${adminDeskUrl}" style="display: inline-block; background-color: #f1f5f9; color: #1e293b; text-decoration: none; padding: 10px 20px; border-radius: 10px; font-weight: 600; font-size: 13px; border: 1px solid #cbd5e1;">
+            Open Admin Order Desk
+          </a>
+        </div>
+
         <div style="padding-top: 16px; border-top: 1px solid #e2e8f0; text-align: center;">
           <p style="font-size: 12px; color: #64748b; margin: 0;">
             Kaduna Plaza 1, Block A, Shop 22, Int’l Centre for Commerce, Trade-Fair Complex, Lagos.
@@ -129,12 +146,19 @@ export const sendOrderAlertEmail = async ({
       </div>
     `;
 
-    const info = await transporter.sendMail({
+    const sendPromise = transporter.sendMail({
       from: `"Vinoff Wholesale Orders" <${user}>`,
       to: recipientEmails.join(", "),
       subject,
       html,
     });
+
+    const info = await Promise.race([
+      sendPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Email dispatch timed out after 7s")), 7000)
+      ),
+    ]);
 
     console.log(`[Order Alert Sent]: Dispatched to ${recipientEmails.length} admin(s) (${recipientEmails.join(", ")}) [ID: ${info.messageId}]`);
     return { success: true, messageId: info.messageId, recipients: recipientEmails };
@@ -155,6 +179,9 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
 
     const recipient = (email || "").toLowerCase().trim();
     if (!recipient) return { success: false, reason: "Missing recipient email" };
+
+    const clientUrl = (process.env.CLIENT_URL || "https://vinoff-web.vercel.app").replace(/\/+$/, "");
+    const catalogUrl = `${clientUrl}/shop`;
 
     const name = firstName ? `${firstName} ${lastName || ""}`.trim() : "Valued Customer";
     const subject = `👋 Welcome to Vinoff Wholesales Ltd, ${firstName || "Partner"}!`;
@@ -182,9 +209,9 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
             </ul>
           </div>
 
-          <div style="margin: 24px 0; text-align: center;">
-            <a href="https://vinoff-web.vercel.app/shop" style="display: inline-block; background-color: #15803d; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 12px; font-weight: bold; font-size: 14px;">
-              Start Shopping Catalog
+          <div style="margin: 28px 0; text-align: center;">
+            <a href="${catalogUrl}" style="display: inline-block; background-color: #15803d; color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 12px; font-weight: 800; font-size: 15px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+              Start Shopping Catalog &rarr;
             </a>
           </div>
 
@@ -207,12 +234,19 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
       </div>
     `;
 
-    const info = await transporter.sendMail({
+    const sendPromise = transporter.sendMail({
       from: `"Vinoff Wholesales" <${user}>`,
       to: recipient,
       subject,
       html,
     });
+
+    const info = await Promise.race([
+      sendPromise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Welcome email dispatch timed out after 7s")), 7000)
+      ),
+    ]);
 
     console.log(`[Welcome Email Sent]: Delivered to ${recipient} [ID: ${info.messageId}]`);
     return { success: true, messageId: info.messageId };

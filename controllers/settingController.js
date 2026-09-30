@@ -281,7 +281,7 @@ export const updateNotificationSettings = async (req, res, next) => {
 
 export const testEmailNotification = async (req, res, next) => {
   try {
-    const result = await sendOrderAlertEmail({
+    const emailPromise = sendOrderAlertEmail({
       orderNumber: `TEST-${Math.floor(1000 + Math.random() * 9000)}`,
       customerName: `${req.user?.firstName || "Store"} ${req.user?.lastName || "Admin"}`.trim(),
       phone: req.user?.phone || "+234 803 000 0000",
@@ -293,13 +293,19 @@ export const testEmailNotification = async (req, res, next) => {
       ],
     });
 
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Email dispatch timed out after 8s")), 8000)
+    );
+
+    const result = await Promise.race([emailPromise, timeoutPromise]);
+
     if (result && result.success) {
       return successResponse(res, 200, `Test email alert successfully sent to ${process.env.EMAIL_USER || "your inbox"}!`, result);
     } else {
       return errorResponse(res, 500, `Email failed to send: ${result?.error || result?.reason || "Check server logs"}`);
     }
   } catch (error) {
-    next(error);
+    return errorResponse(res, 500, `Email test failed: ${error.message}`);
   }
 };
 
