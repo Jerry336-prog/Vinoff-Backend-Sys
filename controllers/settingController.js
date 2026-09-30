@@ -182,25 +182,22 @@ export const getNotificationSettings = async (req, res, next) => {
     const customCatSetting = await Setting.findOne({ key: "custom_categories" });
     const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
 
-    // Dynamically retrieve distinct product categories from DB
-    const realCategories = await Product.distinct("category");
-    const activeCategories = realCategories.filter(Boolean);
-    const validCategoryThresholds = {};
-
-    const categoryList = Array.from(
-      new Set([
-        ...STANDARD_CATEGORIES,
-        ...customCategories,
-        ...activeCategories.filter((cat) => cat && !/beverage/i.test(cat)),
-      ])
+    const cleanCustom = customCategories.filter(
+      (c) =>
+        c &&
+        typeof c === "string" &&
+        !STANDARD_CATEGORIES.some((s) => s.toLowerCase() === c.trim().toLowerCase()) &&
+        !/beverage/i.test(c)
     );
 
+    const categoryList = Array.from(
+      new Set([...STANDARD_CATEGORIES, ...cleanCustom])
+    );
+
+    const validCategoryThresholds = {};
     categoryList.forEach((cat) => {
-      // Exclude any stray beverage or mock categories
-      if (!/beverage/i.test(cat)) {
-        validCategoryThresholds[cat] =
-          notificationPrefs.categoryThresholds?.[cat] ?? notificationPrefs.lowStockThreshold ?? 5;
-      }
+      validCategoryThresholds[cat] =
+        notificationPrefs.categoryThresholds?.[cat] ?? notificationPrefs.lowStockThreshold ?? 5;
     });
 
     notificationPrefs.categoryThresholds = validCategoryThresholds;
@@ -223,11 +220,27 @@ export const updateNotificationSettings = async (req, res, next) => {
       soundAlertsEnabled,
     } = req.body;
 
+    const customCatSetting = await Setting.findOne({ key: "custom_categories" });
+    const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
+    const allowedCategories = new Set([
+      ...STANDARD_CATEGORIES.map((c) => c.toLowerCase()),
+      ...customCategories.map((c) => c.toLowerCase()),
+    ]);
+
+    const sanitizedCategoryThresholds = {};
+    if (typeof categoryThresholds === "object" && categoryThresholds !== null) {
+      Object.entries(categoryThresholds).forEach(([k, v]) => {
+        if (allowedCategories.has(k.toLowerCase()) && !/beverage/i.test(k)) {
+          sanitizedCategoryThresholds[k] = Number(v) >= 0 ? Number(v) : 5;
+        }
+      });
+    }
+
     const updated = {
       lowStockThreshold: Number(lowStockThreshold) >= 0 ? Number(lowStockThreshold) : 5,
       categoryThresholds:
-        typeof categoryThresholds === "object" && categoryThresholds !== null
-          ? categoryThresholds
+        Object.keys(sanitizedCategoryThresholds).length > 0
+          ? sanitizedCategoryThresholds
           : DEFAULT_NOTIFICATIONS.categoryThresholds,
       lowStockAlertsEnabled: lowStockAlertsEnabled !== undefined ? Boolean(lowStockAlertsEnabled) : true,
       whatsappNotificationsEnabled: whatsappNotificationsEnabled !== undefined ? Boolean(whatsappNotificationsEnabled) : false,
@@ -500,20 +513,21 @@ export const getCategories = async (req, res, next) => {
     const customCatSetting = await Setting.findOne({ key: "custom_categories" });
     const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
 
-    const realProductCategories = await Product.distinct("category");
-    const activeProductCategories = realProductCategories.filter((c) => Boolean(c) && !/beverage/i.test(c));
+    const cleanCustom = customCategories.filter(
+      (c) =>
+        c &&
+        typeof c === "string" &&
+        !STANDARD_CATEGORIES.some((s) => s.toLowerCase() === c.trim().toLowerCase()) &&
+        !/beverage/i.test(c)
+    );
 
     const allCategories = Array.from(
-      new Set([
-        ...STANDARD_CATEGORIES,
-        ...customCategories,
-        ...activeProductCategories,
-      ])
+      new Set([...STANDARD_CATEGORIES, ...cleanCustom])
     );
 
     return successResponse(res, 200, "Categories retrieved successfully", {
       standardCategories: STANDARD_CATEGORIES,
-      customCategories,
+      customCategories: cleanCustom,
       categories: allCategories,
     });
   } catch (error) {
@@ -561,10 +575,9 @@ export const addCategory = async (req, res, next) => {
         const catThresholds = { ...(notifSetting.value.categoryThresholds || {}) };
         if (catThresholds[name] === undefined) {
           catThresholds[name] = notifSetting.value.lowStockThreshold || 5;
-          await Setting.findOneAndUpdate(
-            { key: "notification_preferences" },
-            { "value.categoryThresholds": catThresholds }
-          );
+          notifSetting.value.categoryThresholds = catThresholds;
+          notifSetting.markModified("value");
+          await notifSetting.save();
         }
       }
 
@@ -580,14 +593,22 @@ export const addCategory = async (req, res, next) => {
       }
     }
 
+    const cleanCustom = customCategories.filter(
+      (c) =>
+        c &&
+        typeof c === "string" &&
+        !STANDARD_CATEGORIES.some((s) => s.toLowerCase() === c.trim().toLowerCase()) &&
+        !/beverage/i.test(c)
+    );
+
     const allCategories = Array.from(
-      new Set([...STANDARD_CATEGORIES, ...customCategories])
+      new Set([...STANDARD_CATEGORIES, ...cleanCustom])
     );
 
     return successResponse(res, 201, `Category "${name}" added successfully`, {
       name,
       standardCategories: STANDARD_CATEGORIES,
-      customCategories,
+      customCategories: cleanCustom,
       categories: allCategories,
     });
   } catch (error) {
@@ -610,7 +631,7 @@ export const removeCategory = async (req, res, next) => {
     const customCatSetting = await Setting.findOne({ key: "custom_categories" });
     const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
 
-    const filtered = customCategories.filter((c) => c.toLowerCase() !== name.toLowerCase());
+    const filtered = customCategories.filter((c) => c && c.toLowerCase() !== name.toLowerCase());
 
     await Setting.findOneAndUpdate(
       { key: "custom_categories" },
@@ -622,15 +643,24 @@ export const removeCategory = async (req, res, next) => {
       { upsert: true, new: true }
     );
 
-    // Remove from notification thresholds if present
+    // Reassign any products assigned to this deleted custom category back to "Toiletries"
+    await Product.updateMany(
+      { category: { $regex: new RegExp(`^${name}$`, "i") } },
+      { $set: { category: "Toiletries" } }
+    );
+
+    // Remove from notification thresholds reliably using markModified
     const notifSetting = await Setting.findOne({ key: "notification_preferences" });
-    if (notifSetting?.value?.categoryThresholds) {
-      const thresholds = { ...notifSetting.value.categoryThresholds };
-      delete thresholds[name];
-      await Setting.findOneAndUpdate(
-        { key: "notification_preferences" },
-        { "value.categoryThresholds": thresholds }
-      );
+    if (notifSetting && typeof notifSetting.value === "object") {
+      const thresholds = { ...(notifSetting.value.categoryThresholds || {}) };
+      Object.keys(thresholds).forEach((key) => {
+        if (key.toLowerCase() === name.toLowerCase()) {
+          delete thresholds[key];
+        }
+      });
+      notifSetting.value.categoryThresholds = thresholds;
+      notifSetting.markModified("value");
+      await notifSetting.save();
     }
 
     if (req.user?._id) {
