@@ -273,12 +273,14 @@ export const updateNotificationSettings = async (req, res, next) => {
 
 export const testEmailNotification = async (req, res, next) => {
   try {
+    const ownerEmail = (process.env.EMAIL_USER || req.user?.email || "chinedujeremiah723@gmail.com").trim();
     const emailPromise = sendOrderAlertEmail({
       orderNumber: `TEST-${Math.floor(1000 + Math.random() * 9000)}`,
       customerName: `${req.user?.firstName || "Store"} ${req.user?.lastName || "Admin"}`.trim(),
       phone: req.user?.phone || "+234 803 000 0000",
       totalAmount: 185000,
       itemsCount: 2,
+      targetEmail: ownerEmail,
       items: [
         { name: "Toiletries Box (Sample)", quantity: 2, unitType: "cartons", price: 45000 },
         { name: "Multipurpose Detergent 10L (Sample)", quantity: 1, unitType: "cartons", price: 95000 },
@@ -292,7 +294,12 @@ export const testEmailNotification = async (req, res, next) => {
     const result = await Promise.race([emailPromise, timeoutPromise]);
 
     if (result && result.success) {
-      return successResponse(res, 200, `Test email alert successfully sent to ${process.env.EMAIL_USER || "your inbox"}!`, result);
+      return successResponse(
+        res,
+        200,
+        `Test email alert successfully sent to ${result.recipients?.join(", ") || ownerEmail}! (${result.provider || "Delivered"})`,
+        result
+      );
     } else {
       return errorResponse(res, 500, `Email failed to send: ${result?.error || result?.reason || "Check server logs"}`);
     }

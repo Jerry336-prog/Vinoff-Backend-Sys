@@ -27,7 +27,31 @@ const sendViaResend = async ({ to, subject, html }) => {
 
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.message || data.error?.message || "Resend API returned an error");
+    const errorMsg = data.message || data.error?.message || "Resend API returned an error";
+    // If Resend sandbox allows only the account owner email, automatically retry directly to the owner
+    if (/only send testing emails to your own email address/i.test(errorMsg)) {
+      const match = errorMsg.match(/\(([^)]+)\)/);
+      const ownerEmail = match ? match[1].trim() : (process.env.EMAIL_USER || "chinedujeremiah723@gmail.com");
+      console.warn(`[Resend Sandbox]: Automatically retrying dispatch directly to verified account owner (${ownerEmail})...`);
+      const retryRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: senderEmail,
+          to: [ownerEmail],
+          subject,
+          html,
+        }),
+      });
+      const retryData = await retryRes.json();
+      if (retryRes.ok) {
+        return { success: true, messageId: retryData.id, provider: `Resend (HTTPS Sandbox -> ${ownerEmail})` };
+      }
+    }
+    throw new Error(errorMsg);
   }
 
   return { success: true, messageId: data.id, provider: "Resend (HTTPS)" };
@@ -170,20 +194,26 @@ export const sendOrderAlertEmail = async ({
   itemsCount,
   phone,
   items = [],
+  targetEmail = null,
 }) => {
   try {
-    // Dynamically retrieve all users with admin or superadmin role right now
-    const activeAdmins = await User.find({
-      role: { $in: ["admin", "superadmin"] },
-      status: { $ne: "blocked" },
-    }).select("email");
+    let recipientEmails = [];
+    if (targetEmail) {
+      recipientEmails = [targetEmail.toLowerCase().trim()];
+    } else {
+      // Dynamically retrieve all users with admin or superadmin role right now
+      const activeAdmins = await User.find({
+        role: { $in: ["admin", "superadmin"] },
+        status: { $ne: "blocked" },
+      }).select("email");
 
-    const adminEmails = activeAdmins
-      .map((a) => a.email && a.email.toLowerCase().trim())
-      .filter(Boolean);
+      const adminEmails = activeAdmins
+        .map((a) => a.email && a.email.toLowerCase().trim())
+        .filter(Boolean);
 
-    const defaultOwner = (process.env.EMAIL_USER || "").trim();
-    const recipientEmails = Array.from(new Set([defaultOwner, ...adminEmails].filter(Boolean)));
+      const defaultOwner = (process.env.EMAIL_USER || "").trim();
+      recipientEmails = Array.from(new Set([defaultOwner, ...adminEmails].filter(Boolean)));
+    }
 
     if (recipientEmails.length === 0) {
       return { success: false, reason: "No recipient admin emails found in database" };
