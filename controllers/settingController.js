@@ -165,8 +165,6 @@ const DEFAULT_NOTIFICATIONS = {
     "Laundry Care": 5,
   },
   lowStockAlertsEnabled: true,
-  whatsappNotificationsEnabled: true,
-  whatsappNumber: "",
   notifyOnNewOrder: true,
   notifyOnNewCustomer: true,
   soundAlertsEnabled: true,
@@ -214,8 +212,6 @@ export const updateNotificationSettings = async (req, res, next) => {
       lowStockThreshold,
       categoryThresholds,
       lowStockAlertsEnabled,
-      whatsappNotificationsEnabled,
-      whatsappNumber,
       notifyOnNewOrder,
       notifyOnNewCustomer,
       soundAlertsEnabled,
@@ -244,8 +240,6 @@ export const updateNotificationSettings = async (req, res, next) => {
           ? sanitizedCategoryThresholds
           : DEFAULT_NOTIFICATIONS.categoryThresholds,
       lowStockAlertsEnabled: lowStockAlertsEnabled !== undefined ? Boolean(lowStockAlertsEnabled) : true,
-      whatsappNotificationsEnabled: whatsappNotificationsEnabled !== undefined ? Boolean(whatsappNotificationsEnabled) : false,
-      whatsappNumber: typeof whatsappNumber === "string" ? whatsappNumber.trim() : "",
       notifyOnNewOrder: notifyOnNewOrder !== undefined ? Boolean(notifyOnNewOrder) : true,
       notifyOnNewCustomer: notifyOnNewCustomer !== undefined ? Boolean(notifyOnNewCustomer) : true,
       soundAlertsEnabled: soundAlertsEnabled !== undefined ? Boolean(soundAlertsEnabled) : true,
@@ -267,9 +261,7 @@ export const updateNotificationSettings = async (req, res, next) => {
       action: "Admin updated alert and notification preferences",
       targetType: "Setting",
       targetId: setting._id,
-      description: `Notification preferences updated: Low stock alert threshold (${updated.lowStockThreshold} cartons), WhatsApp alerts: ${
-        updated.whatsappNotificationsEnabled ? `ON (${updated.whatsappNumber || 'No phone set'})` : "OFF"
-      }`,
+      description: `Notification preferences updated: Low stock alert threshold (${updated.lowStockThreshold} cartons), Email alerts: active`,
       metadata: updated,
     });
 

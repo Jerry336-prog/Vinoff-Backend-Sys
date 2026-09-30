@@ -2,33 +2,160 @@ import nodemailer from "nodemailer";
 import User from "../models/User.js";
 
 /**
- * Creates and returns a verified Nodemailer transporter
+ * Sends email via Resend HTTP API (Port 443 - works on Render Free Tier without SMTP blocks)
+ */
+const sendViaResend = async ({ to, subject, html }) => {
+  const apiKey = (process.env.RESEND_API_KEY || "").trim();
+  if (!apiKey) return null;
+
+  const senderEmail = (process.env.EMAIL_FROM || "Vinoff Wholesales <onboarding@resend.dev>").trim();
+  const recipientList = Array.isArray(to) ? to : [to];
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: senderEmail,
+      to: recipientList,
+      subject,
+      html,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.message || data.error?.message || "Resend API returned an error");
+  }
+
+  return { success: true, messageId: data.id, provider: "Resend (HTTPS)" };
+};
+
+/**
+ * Sends email via Brevo HTTP API (Port 443 - works on Render Free Tier without SMTP blocks)
+ */
+const sendViaBrevo = async ({ to, subject, html }) => {
+  const apiKey = (process.env.BREVO_API_KEY || "").trim();
+  if (!apiKey) return null;
+
+  const senderEmail = (process.env.EMAIL_USER || "info@vinoff.com").trim();
+  const recipientList = (Array.isArray(to) ? to : [to]).map((email) => ({ email }));
+
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "api-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      sender: { name: "Vinoff Wholesales", email: senderEmail },
+      to: recipientList,
+      subject,
+      htmlContent: html,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.message || "Brevo API returned an error");
+  }
+
+  return { success: true, messageId: data.messageId, provider: "Brevo (HTTPS)" };
+};
+
+/**
+ * Creates and returns a verified Nodemailer transporter for Gmail / SMTP
  */
 const getTransporter = () => {
   const user = (process.env.EMAIL_USER || "").trim();
   const pass = (process.env.EMAIL_PASS || "").replace(/\s+/g, "");
 
   if (!user || !pass) {
-    console.warn("[Email Service]: EMAIL_USER or EMAIL_PASS not configured in environment");
     return null;
   }
 
   return {
     transporter: nodemailer.createTransport({
       service: "gmail",
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
       auth: {
         user,
         pass,
       },
-      connectionTimeout: 5000, // 5s connection timeout
-      greetingTimeout: 5000,   // 5s greeting timeout
-      socketTimeout: 8000,     // 8s socket timeout
+      connectionTimeout: 6000,
+      greetingTimeout: 6000,
+      socketTimeout: 8000,
     }),
     user,
   };
+};
+
+/**
+ * Core dispatcher: tries HTTPS APIs first (port 443, Render-compatible), then falls back to SMTP
+ */
+export const dispatchEmail = async ({ to, subject, html }) => {
+  // 1. Try Resend HTTPS API (port 443, never blocked by Render)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const resendResult = await sendViaResend({ to, subject, html });
+      if (resendResult) return resendResult;
+    } catch (resendErr) {
+      console.error("[Email Resend Error]:", resendErr.message);
+    }
+  }
+
+  // 2. Try Brevo HTTPS API (port 443, never blocked by Render)
+  if (process.env.BREVO_API_KEY) {
+    try {
+      const brevoResult = await sendViaBrevo({ to, subject, html });
+      if (brevoResult) return brevoResult;
+    } catch (brevoErr) {
+      console.error("[Email Brevo Error]:", brevoErr.message);
+    }
+  }
+
+  // 3. Fallback to Nodemailer SMTP (Gmail)
+  const config = getTransporter();
+  if (!config) {
+    return {
+      success: false,
+      reason:
+        "No email credentials configured. Please set EMAIL_USER & EMAIL_PASS (or RESEND_API_KEY) in Render Environment Variables.",
+    };
+  }
+
+  const { transporter, user } = config;
+  const recipientList = Array.isArray(to) ? to : [to];
+
+  try {
+    const sendPromise = transporter.sendMail({
+      from: `"Vinoff Wholesale Orders" <${user}>`,
+      to: recipientList.join(", "),
+      subject,
+      html,
+    });
+
+    const info = await Promise.race([
+      sendPromise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                "SMTP connection timed out. If you are on Render Free tier, Render blocks outbound SMTP ports (25, 465, 587). Please add a free RESEND_API_KEY in Render Environment Variables to send emails via HTTPS port 443."
+              )
+            ),
+          7000
+        )
+      ),
+    ]);
+
+    return { success: true, messageId: info.messageId, provider: "Gmail SMTP" };
+  } catch (err) {
+    console.error("[Email SMTP Error]:", err.message);
+    return { success: false, error: err.message };
+  }
 };
 
 /**
@@ -45,10 +172,6 @@ export const sendOrderAlertEmail = async ({
   items = [],
 }) => {
   try {
-    const config = getTransporter();
-    if (!config) return { success: false, reason: "Missing credentials" };
-    const { transporter, user } = config;
-
     // Dynamically retrieve all users with admin or superadmin role right now
     const activeAdmins = await User.find({
       role: { $in: ["admin", "superadmin"] },
@@ -59,25 +182,26 @@ export const sendOrderAlertEmail = async ({
       .map((a) => a.email && a.email.toLowerCase().trim())
       .filter(Boolean);
 
-    // Combine default store owner email with all current admin emails
-    const recipientEmails = Array.from(new Set([user, ...adminEmails]));
+    const defaultOwner = (process.env.EMAIL_USER || "").trim();
+    const recipientEmails = Array.from(new Set([defaultOwner, ...adminEmails].filter(Boolean)));
 
     if (recipientEmails.length === 0) {
-      return { success: false, reason: "No recipient emails found" };
+      return { success: false, reason: "No recipient admin emails found in database" };
     }
 
-    const itemsRows = Array.isArray(items) && items.length > 0
-      ? items
-          .map(
-            (it) => `
+    const itemsRows =
+      Array.isArray(items) && items.length > 0
+        ? items
+            .map(
+              (it) => `
           <tr style="border-bottom: 1px solid #f1f5f9;">
             <td style="padding: 8px 4px; font-size: 13px; color: #1e293b;">${it.name || "Product"}</td>
             <td style="padding: 8px 4px; font-size: 13px; text-align: center; color: #475569;">${it.quantity} ${it.unitType || "ctns"}</td>
             <td style="padding: 8px 4px; font-size: 13px; text-align: right; font-weight: bold; color: #1e293b;">₦${Number((it.price || 0) * (it.quantity || 1)).toLocaleString()}</td>
           </tr>`
-          )
-          .join("")
-      : `<tr><td colspan="3" style="padding: 8px 4px; color: #64748b;">${itemsCount || 1} product(s) ordered</td></tr>`;
+            )
+            .join("")
+        : `<tr><td colspan="3" style="padding: 8px 4px; color: #64748b;">${itemsCount || 1} product(s) ordered</td></tr>`;
 
     const clientUrl = (process.env.CLIENT_URL || "https://vinoff-web.vercel.app").replace(/\/+$/, "");
     const orderPageUrl = `${clientUrl}/orders/${orderNumber}`;
@@ -146,22 +270,20 @@ export const sendOrderAlertEmail = async ({
       </div>
     `;
 
-    const sendPromise = transporter.sendMail({
-      from: `"Vinoff Wholesale Orders" <${user}>`,
-      to: recipientEmails.join(", "),
+    const result = await dispatchEmail({
+      to: recipientEmails,
       subject,
       html,
     });
 
-    const info = await Promise.race([
-      sendPromise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Email dispatch timed out after 7s")), 7000)
-      ),
-    ]);
-
-    console.log(`[Order Alert Sent]: Dispatched to ${recipientEmails.length} admin(s) (${recipientEmails.join(", ")}) [ID: ${info.messageId}]`);
-    return { success: true, messageId: info.messageId, recipients: recipientEmails };
+    if (result.success) {
+      console.log(
+        `[Order Alert Sent via ${result.provider}]: Dispatched to ${recipientEmails.length} admin(s) (${recipientEmails.join(", ")}) [ID: ${result.messageId}]`
+      );
+      return { success: true, messageId: result.messageId, recipients: recipientEmails, provider: result.provider };
+    } else {
+      return result;
+    }
   } catch (err) {
     console.error("[Email Alert Error]:", err.message);
     return { success: false, error: err.message };
@@ -173,10 +295,6 @@ export const sendOrderAlertEmail = async ({
  */
 export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
   try {
-    const config = getTransporter();
-    if (!config) return { success: false, reason: "Missing credentials" };
-    const { transporter, user } = config;
-
     const recipient = (email || "").toLowerCase().trim();
     if (!recipient) return { success: false, reason: "Missing recipient email" };
 
@@ -205,7 +323,7 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
               <li><strong>Wholesale Catalog:</strong> Browse commercial toiletries, cleaners, cosmetics, and detergents at verified wholesale prices.</li>
               <li><strong>Flexible Ordering:</strong> Buy in bulk carton bundles or purchase loose units/pieces to assemble custom orders.</li>
               <li><strong>Instant Invoicing:</strong> Automatically generate downloadable PDF invoices for corporate accounting.</li>
-              <li><strong>Direct Dispatch Support:</strong> Chat directly with our warehouse team or ping our dispatch line via WhatsApp.</li>
+              <li><strong>Direct Dispatch Support:</strong> Chat directly with our sales desk and warehouse administration via the portal support chat.</li>
             </ul>
           </div>
 
@@ -234,26 +352,24 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
       </div>
     `;
 
-    const sendPromise = transporter.sendMail({
-      from: `"Vinoff Wholesales" <${user}>`,
+    const result = await dispatchEmail({
       to: recipient,
       subject,
       html,
     });
 
-    const info = await Promise.race([
-      sendPromise,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Welcome email dispatch timed out after 7s")), 7000)
-      ),
-    ]);
-
-    console.log(`[Welcome Email Sent]: Delivered to ${recipient} [ID: ${info.messageId}]`);
-    return { success: true, messageId: info.messageId };
+    if (result.success) {
+      console.log(
+        `[Welcome Email Sent via ${result.provider}]: Delivered to ${recipient} [ID: ${result.messageId}]`
+      );
+      return { success: true, messageId: result.messageId, provider: result.provider };
+    } else {
+      return result;
+    }
   } catch (err) {
     console.error("[Welcome Email Error]:", err.message);
     return { success: false, error: err.message };
   }
 };
 
-export default { sendOrderAlertEmail, sendWelcomeEmail };
+export default { sendOrderAlertEmail, sendWelcomeEmail, dispatchEmail };

@@ -261,58 +261,6 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     metadata: { orderNumber, totalAmount, itemsCount: processedItems.length },
   });
 
-  // Automated WhatsApp alert dispatch if enabled in Notification Preferences
-  let whatsappUrl = null;
-  let whatsappNumber = null;
-  try {
-    const notificationSetting = await Setting.findOne({ key: "notification_preferences" });
-    const prefs = notificationSetting?.value || {};
-    if (prefs.whatsappNotificationsEnabled && prefs.whatsappNumber) {
-      let cleanPhone = prefs.whatsappNumber.replace(/[^0-9]/g, "");
-      // Convert Nigerian local 080... format to international 23480...
-      if (cleanPhone.startsWith("0") && cleanPhone.length === 11) {
-        cleanPhone = `234${cleanPhone.slice(1)}`;
-      } else if (!cleanPhone.startsWith("234") && cleanPhone.length === 10) {
-        cleanPhone = `234${cleanPhone}`;
-      }
-
-      whatsappNumber = cleanPhone;
-
-      const itemsSummary = processedItems
-        .slice(0, 5)
-        .map((it) => `• ${it.name} (${it.quantity} ${it.unitType || "ctns"})`)
-        .join("\n");
-      const moreItems = processedItems.length > 5 ? `\n...and ${processedItems.length - 5} more item(s)` : "";
-
-      const waText =
-        `*📦 NEW WHOLESALE ORDER ALERT - VINOFF*\n\n` +
-        `*Order Number:* #${orderNumber}\n` +
-        `*Customer:* ${customer.firstName} ${customer.lastName}\n` +
-        `*Phone:* ${customer.phone || "Not specified"}\n` +
-        `*Total Amount:* ₦${totalAmount.toLocaleString()}\n` +
-        `*Items (${processedItems.length}):*\n${itemsSummary}${moreItems}\n\n` +
-        `*Status:* Pending Payment / Invoice Issued\n` +
-        `Check admin dashboard to verify payment or dispatch items.`;
-
-      whatsappUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(waText)}`;
-
-      await logActivity({
-        actorId: customerId,
-        action: "WhatsApp Order Notification Prepared",
-        targetType: "Order",
-        targetId: order._id,
-        description: `WhatsApp notification dispatch link generated for store owner (${cleanPhone})`,
-        metadata: {
-          whatsappNumber: cleanPhone,
-          whatsappUrl,
-          orderNumber,
-        },
-      });
-    }
-  } catch (err) {
-    console.error("[WhatsApp Notification Error]:", err.message);
-  }
-
   // Instant Email Ping to Store Owner and Admins (non-blocking async background)
   sendOrderAlertEmail({
     orderNumber,
@@ -329,8 +277,6 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     order,
     invoice,
     chat,
-    whatsappUrl,
-    whatsappNumber,
   };
 };
 
