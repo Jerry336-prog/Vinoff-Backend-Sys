@@ -1,7 +1,9 @@
+import crypto from "crypto";
 import User from "../models/User.js";
 import { sendTokenResponse } from "../services/authService.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { logActivity, notifyAdmins } from "../services/notificationService.js";
+import { parseClientInfo } from "../utils/deviceParser.js";
 
 /**
  * Register a new customer
@@ -16,6 +18,9 @@ export const register = async (req, res, next) => {
       return errorResponse(res, 400, "An account with this email already exists");
     }
 
+    const sessionId = crypto.randomUUID();
+    const clientInfo = parseClientInfo(req);
+
     const user = await User.create({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
@@ -27,6 +32,18 @@ export const register = async (req, res, next) => {
         companyName: companyName ? companyName.trim() : "",
         businessType: businessType ? businessType.trim() : "",
       },
+      sessions: [
+        {
+          sessionId,
+          device: clientInfo.device,
+          browser: clientInfo.browser,
+          os: clientInfo.os,
+          ip: clientInfo.ip,
+          userAgent: clientInfo.userAgent,
+          lastActive: new Date(),
+          createdAt: new Date(),
+        },
+      ],
     });
 
     await logActivity({
@@ -44,7 +61,7 @@ export const register = async (req, res, next) => {
       relatedUser: user._id,
     });
 
-    return sendTokenResponse(res, user, 201, "Registration successful");
+    return sendTokenResponse(res, user, 201, "Registration successful", sessionId);
   } catch (error) {
     next(error);
   }
@@ -72,7 +89,28 @@ export const login = async (req, res, next) => {
       return errorResponse(res, 403, "Your account has been suspended. Please contact support.");
     }
 
-    return sendTokenResponse(res, user, 200, "Login successful");
+    const sessionId = crypto.randomUUID();
+    const clientInfo = parseClientInfo(req);
+
+    if (!Array.isArray(user.sessions)) user.sessions = [];
+    user.sessions.unshift({
+      sessionId,
+      device: clientInfo.device,
+      browser: clientInfo.browser,
+      os: clientInfo.os,
+      ip: clientInfo.ip,
+      userAgent: clientInfo.userAgent,
+      lastActive: new Date(),
+      createdAt: new Date(),
+    });
+
+    if (user.sessions.length > 15) {
+      user.sessions = user.sessions.slice(0, 15);
+    }
+
+    await user.save({ validateBeforeSave: false });
+
+    return sendTokenResponse(res, user, 200, "Login successful", sessionId);
   } catch (error) {
     next(error);
   }

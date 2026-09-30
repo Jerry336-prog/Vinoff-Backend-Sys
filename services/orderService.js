@@ -3,6 +3,7 @@ import Product from "../models/Product.js";
 import Chat from "../models/Chat.js";
 import Message from "../models/Message.js";
 import User from "../models/User.js";
+import Setting from "../models/Setting.js";
 import { generateOrderNumber } from "../utils/generateOrderNumber.js";
 import { createInvoiceForOrder } from "./invoiceService.js";
 import { notifyAdmins, notifyUser, logActivity } from "./notificationService.js";
@@ -57,6 +58,37 @@ const reserveInventory = async (requirements, productMap) => {
     throw error;
   }
 
+  // Check low-stock alert thresholds
+  try {
+    const notificationSetting = await Setting.findOne({ key: "notification_preferences" });
+    const prefs = notificationSetting?.value || {};
+    if (prefs.lowStockAlertsEnabled !== false) {
+      const globalThreshold = Number(prefs.lowStockThreshold) >= 0 ? Number(prefs.lowStockThreshold) : 5;
+      const categoryThresholds = prefs.categoryThresholds || {};
+
+      for (const requirement of requirements.values()) {
+        const currentProd = await Product.findById(requirement.productId).select("name stock category");
+        if (currentProd) {
+          const threshold =
+            categoryThresholds[currentProd.category] !== undefined
+              ? Number(categoryThresholds[currentProd.category])
+              : globalThreshold;
+
+          if (currentProd.stock <= threshold) {
+            await notifyAdmins({
+              type: "LOW_STOCK",
+              title: "⚠️ Low Stock Alert",
+              message: `Product '${currentProd.name}' (${currentProd.category || "General"}) has dropped to ${currentProd.stock} carton(s) remaining (Alert threshold: ${threshold} cartons). Please restock soon.`,
+              relatedProduct: currentProd._id,
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[Low Stock Alert Check Error]:", err.message);
+  }
+
   return appliedAdjustments;
 };
 
@@ -75,6 +107,15 @@ const restoreInventory = async (adjustments) => {
  * Creates a wholesale order
  */
 export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = "" }) => {
+  // Check store status / vacation mode
+  const storeStatusSetting = await Setting.findOne({ key: "store_status" });
+  if (storeStatusSetting && storeStatusSetting.value?.isOpen === false) {
+    const notice =
+      storeStatusSetting.value.bannerMessage ||
+      "We are currently restocking our warehouse for the weekend. Orders placed today will be dispatched Monday.";
+    throw new Error(`The store is temporarily closed for orders / stock-taking. ${notice}`);
+  }
+
   if (!items || !items.length) {
     throw new Error("Order must have at least one item");
   }
@@ -217,6 +258,41 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     description: `Customer placed order #${orderNumber}`,
     metadata: { orderNumber, totalAmount, itemsCount: processedItems.length },
   });
+
+  // Automated WhatsApp alert dispatch if enabled in Notification Preferences
+  try {
+    const notificationSetting = await Setting.findOne({ key: "notification_preferences" });
+    const prefs = notificationSetting?.value || {};
+    if (prefs.whatsappNotificationsEnabled && prefs.whatsappNumber) {
+      const cleanPhone = prefs.whatsappNumber.replace(/[^0-9]/g, "");
+      const waText =
+        `*📦 NEW WHOLESALE ORDER ALERT - VINOFF*\n\n` +
+        `*Order Number:* #${orderNumber}\n` +
+        `*Customer:* ${customer.firstName} ${customer.lastName}\n` +
+        `*Phone:* ${customer.phone || "Not specified"}\n` +
+        `*Total Amount:* ₦${totalAmount.toLocaleString()}\n` +
+        `*Items:* ${processedItems.length} product(s)\n` +
+        `*Status:* Pending Payment / Invoice Issued\n\n` +
+        `Check admin dashboard to verify payment or dispatch items.`;
+
+      const whatsappUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(waText)}`;
+
+      await logActivity({
+        actorId: customerId,
+        action: "WhatsApp Order Notification Triggered",
+        targetType: "Order",
+        targetId: order._id,
+        description: `Automated WhatsApp order notification prepared for store owner at ${prefs.whatsappNumber}`,
+        metadata: {
+          whatsappNumber: prefs.whatsappNumber,
+          whatsappUrl,
+          orderNumber,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("[WhatsApp Notification Error]:", err.message);
+  }
 
   return { order, invoice, chat };
 };

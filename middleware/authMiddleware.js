@@ -39,7 +39,26 @@ export const protect = async (req, res, next) => {
       return errorResponse(res, 403, "Your account has been suspended. Please contact support.");
     }
 
+    // Invalidate tokens issued before logout-all-devices
+    if (user.tokensValidAfter && decoded.iat && decoded.iat * 1000 < new Date(user.tokensValidAfter).getTime()) {
+      return errorResponse(res, 401, "Session revoked. Please log in again.");
+    }
+
     req.user = user;
+    req.sessionId = decoded.sessionId || null;
+
+    // Background update lastActive (throttled to at most once per 5 minutes per session)
+    if (decoded.sessionId && Array.isArray(user.sessions)) {
+      const currentSession = user.sessions.find((s) => s.sessionId === decoded.sessionId);
+      if (currentSession) {
+        const lastActiveTime = new Date(currentSession.lastActive || 0).getTime();
+        if (Date.now() - lastActiveTime > 5 * 60 * 1000) {
+          currentSession.lastActive = new Date();
+          user.save({ validateBeforeSave: false }).catch(() => {});
+        }
+      }
+    }
+
     next();
   } catch (error) {
     return errorResponse(res, 500, "Authentication processing error", error.message);

@@ -2,16 +2,21 @@ import jwt from "jsonwebtoken";
 import { ENV } from "../config/env.js";
 
 /**
- * Generates JWT token for user
+ * Generates JWT token for user with optional sessionId
  * @param {object} user
+ * @param {string|null} sessionId
  */
-export const generateToken = (user) => {
+export const generateToken = (user, sessionId = null) => {
+  const payload = {
+    id: user._id,
+    email: user.email,
+    role: user.role,
+  };
+  if (sessionId) {
+    payload.sessionId = sessionId;
+  }
   return jwt.sign(
-    {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-    },
+    payload,
     ENV.JWT_SECRET,
     {
       expiresIn: ENV.JWT_EXPIRES_IN,
@@ -22,8 +27,8 @@ export const generateToken = (user) => {
 /**
  * Sends safe user response with cookie and token
  */
-export const sendTokenResponse = (res, user, statusCode = 200, message = "Success") => {
-  const token = generateToken(user);
+export const sendTokenResponse = (res, user, statusCode = 200, message = "Success", sessionId = null) => {
+  const token = generateToken(user, sessionId);
 
   // Cookie options
   const isProd = ENV.NODE_ENV === "production";

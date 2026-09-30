@@ -60,6 +60,22 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    sessions: [
+      {
+        sessionId: { type: String, required: true },
+        device: { type: String, default: "Desktop" },
+        browser: { type: String, default: "Browser" },
+        os: { type: String, default: "Unknown OS" },
+        ip: { type: String, default: "127.0.0.1" },
+        userAgent: { type: String, default: "" },
+        lastActive: { type: Date, default: Date.now },
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    tokensValidAfter: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
