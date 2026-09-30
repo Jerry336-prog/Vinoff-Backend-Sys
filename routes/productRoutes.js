@@ -6,7 +6,6 @@ import { upload } from "../middleware/uploadMiddleware.js";
 import { validate } from "../middleware/validationMiddleware.js";
 import { validateProduct } from "../validators/productValidator.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
-import { productWriteLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router();
 
@@ -19,7 +18,6 @@ router.post(
   "/",
   protect,
   adminOrSubAdmin,
-  productWriteLimiter,
   idempotency,
   upload.array("images", 5),
   validate((body) => validateProduct(body, false)),
@@ -30,7 +28,6 @@ router.patch(
   "/bulk/ordering-format",
   protect,
   adminOrSubAdmin,
-  productWriteLimiter,
   idempotency,
   productController.bulkUpdateOrderingFormat
 );
@@ -39,13 +36,12 @@ router.patch(
   "/:id",
   protect,
   adminOrSubAdmin,
-  productWriteLimiter,
   idempotency,
   upload.array("images", 5),
   validate((body) => validateProduct(body, true)),
   productController.updateProduct
 );
 
-router.delete("/:id", protect, adminOrSubAdmin, productWriteLimiter, idempotency, productController.deleteProduct);
+router.delete("/:id", protect, adminOrSubAdmin, idempotency, productController.deleteProduct);
 
 export default router;

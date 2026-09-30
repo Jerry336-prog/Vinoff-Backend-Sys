@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import Setting from "../models/Setting.js";
 import User from "../models/User.js";
+import Product from "../models/Product.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { logActivity } from "../services/notificationService.js";
 import { generateToken } from "../services/authService.js";
@@ -147,18 +148,20 @@ export const updateStoreStatus = async (req, res, next) => {
   }
 };
 
-// ==========================================
-// 3. AUTOMATED ALERTS & NOTIFICATION PREFERENCES
-// ==========================================
+export const STANDARD_CATEGORIES = [
+  "Toiletries",
+  "Household Cleaners",
+  "Cosmetics",
+  "Laundry Care",
+];
+
 const DEFAULT_NOTIFICATIONS = {
   lowStockThreshold: 5,
   categoryThresholds: {
-    Beverages: 10,
     Toiletries: 5,
+    "Household Cleaners": 5,
     Cosmetics: 5,
-    "Food & Groceries": 10,
-    Confectioneries: 10,
-    Household: 5,
+    "Laundry Care": 5,
   },
   lowStockAlertsEnabled: true,
   whatsappNotificationsEnabled: true,
@@ -171,7 +174,36 @@ const DEFAULT_NOTIFICATIONS = {
 export const getNotificationSettings = async (req, res, next) => {
   try {
     const setting = await Setting.findOne({ key: "notification_preferences" });
-    const notificationPrefs = setting ? { ...DEFAULT_NOTIFICATIONS, ...setting.value } : DEFAULT_NOTIFICATIONS;
+    const notificationPrefs = setting
+      ? { ...DEFAULT_NOTIFICATIONS, ...setting.value }
+      : { ...DEFAULT_NOTIFICATIONS };
+
+    // Retrieve custom categories stored by admin
+    const customCatSetting = await Setting.findOne({ key: "custom_categories" });
+    const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
+
+    // Dynamically retrieve distinct product categories from DB
+    const realCategories = await Product.distinct("category");
+    const activeCategories = realCategories.filter(Boolean);
+    const validCategoryThresholds = {};
+
+    const categoryList = Array.from(
+      new Set([
+        ...STANDARD_CATEGORIES,
+        ...customCategories,
+        ...activeCategories.filter((cat) => cat && !/beverage/i.test(cat)),
+      ])
+    );
+
+    categoryList.forEach((cat) => {
+      // Exclude any stray beverage or mock categories
+      if (!/beverage/i.test(cat)) {
+        validCategoryThresholds[cat] =
+          notificationPrefs.categoryThresholds?.[cat] ?? notificationPrefs.lowStockThreshold ?? 5;
+      }
+    });
+
+    notificationPrefs.categoryThresholds = validCategoryThresholds;
     return successResponse(res, 200, "Notification preferences retrieved successfully", notificationPrefs);
   } catch (error) {
     next(error);
@@ -369,6 +401,256 @@ export const revokeSessionById = async (req, res, next) => {
     await user.save({ validateBeforeSave: false });
 
     return successResponse(res, 200, "Session revoked successfully");
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// 5. STORE LOCATION & WORKING STORE
+// ==========================================
+const DEFAULT_STORE_LOCATION = {
+  shopAddress: "KADUNA PLAZA 1, BLOCK A, SHOP 22",
+  complexArea: "INT’L CENTRE FOR COMMERCE, TRADE-FAIR COMPLEX",
+  cityState: "BADAGRY EXPRESS WAY, LAGOS, NIGERIA",
+  operatingHours: "Monday – Saturday: 8:00 AM – 5:30 PM",
+  phoneContact: "+234 803 000 0000",
+  walkthroughVideoUrl: "/VINOFF_C0_walkthrough.MP4",
+};
+
+export const getStoreLocation = async (req, res, next) => {
+  try {
+    const setting = await Setting.findOne({ key: "store_location" });
+    const storeLocation = setting ? { ...DEFAULT_STORE_LOCATION, ...setting.value } : DEFAULT_STORE_LOCATION;
+    return successResponse(res, 200, "Store location details retrieved successfully", storeLocation);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateStoreLocation = async (req, res, next) => {
+  try {
+    const {
+      shopAddress,
+      complexArea,
+      cityState,
+      operatingHours,
+      phoneContact,
+      walkthroughVideoUrl,
+    } = req.body;
+
+    const updated = {
+      shopAddress:
+        typeof shopAddress === "string" && shopAddress.trim()
+          ? shopAddress.trim()
+          : DEFAULT_STORE_LOCATION.shopAddress,
+      complexArea:
+        typeof complexArea === "string" && complexArea.trim()
+          ? complexArea.trim()
+          : DEFAULT_STORE_LOCATION.complexArea,
+      cityState:
+        typeof cityState === "string" && cityState.trim()
+          ? cityState.trim()
+          : DEFAULT_STORE_LOCATION.cityState,
+      operatingHours:
+        typeof operatingHours === "string" && operatingHours.trim()
+          ? operatingHours.trim()
+          : DEFAULT_STORE_LOCATION.operatingHours,
+      phoneContact:
+        typeof phoneContact === "string" && phoneContact.trim()
+          ? phoneContact.trim()
+          : DEFAULT_STORE_LOCATION.phoneContact,
+      walkthroughVideoUrl:
+        typeof walkthroughVideoUrl === "string" && walkthroughVideoUrl.trim()
+          ? walkthroughVideoUrl.trim()
+          : DEFAULT_STORE_LOCATION.walkthroughVideoUrl,
+      updatedAt: new Date(),
+    };
+
+    const setting = await Setting.findOneAndUpdate(
+      { key: "store_location" },
+      {
+        key: "store_location",
+        value: updated,
+        updatedBy: req.user._id,
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+
+    await logActivity({
+      actorId: req.user._id,
+      action: "Admin updated store location details",
+      targetType: "Setting",
+      targetId: setting._id,
+      description: `Store location updated: ${updated.shopAddress}, ${updated.complexArea}, ${updated.cityState}`,
+      metadata: updated,
+    });
+
+    return successResponse(res, 200, "Store location details updated successfully", setting.value);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ==========================================
+// 6. PRODUCT / STORE CATEGORIES
+// ==========================================
+export const getCategories = async (req, res, next) => {
+  try {
+    const customCatSetting = await Setting.findOne({ key: "custom_categories" });
+    const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
+
+    const realProductCategories = await Product.distinct("category");
+    const activeProductCategories = realProductCategories.filter((c) => Boolean(c) && !/beverage/i.test(c));
+
+    const allCategories = Array.from(
+      new Set([
+        ...STANDARD_CATEGORIES,
+        ...customCategories,
+        ...activeProductCategories,
+      ])
+    );
+
+    return successResponse(res, 200, "Categories retrieved successfully", {
+      standardCategories: STANDARD_CATEGORIES,
+      customCategories,
+      categories: allCategories,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const addCategory = async (req, res, next) => {
+  try {
+    const rawName = req.body.name || req.body.category;
+    if (!rawName || typeof rawName !== "string" || !rawName.trim()) {
+      return errorResponse(res, 400, "Category name is required");
+    }
+
+    const name = rawName.trim();
+    if (name.length < 2) {
+      return errorResponse(res, 400, "Category name must be at least 2 characters");
+    }
+
+    if (/beverage/i.test(name)) {
+      return errorResponse(res, 400, "Beverage categories are not allowed in this catalog");
+    }
+
+    const customCatSetting = await Setting.findOne({ key: "custom_categories" });
+    const customCategories = Array.isArray(customCatSetting?.value) ? [...customCatSetting.value] : [];
+
+    const existsInStandard = STANDARD_CATEGORIES.some((c) => c.toLowerCase() === name.toLowerCase());
+    const existsInCustom = customCategories.some((c) => c.toLowerCase() === name.toLowerCase());
+
+    if (!existsInStandard && !existsInCustom) {
+      customCategories.push(name);
+      await Setting.findOneAndUpdate(
+        { key: "custom_categories" },
+        {
+          key: "custom_categories",
+          value: customCategories,
+          updatedBy: req.user?._id || null,
+        },
+        { upsert: true, new: true }
+      );
+
+      // Also ensure this new category is in notification_preferences.categoryThresholds
+      const notifSetting = await Setting.findOne({ key: "notification_preferences" });
+      if (notifSetting && typeof notifSetting.value === "object") {
+        const catThresholds = { ...(notifSetting.value.categoryThresholds || {}) };
+        if (catThresholds[name] === undefined) {
+          catThresholds[name] = notifSetting.value.lowStockThreshold || 5;
+          await Setting.findOneAndUpdate(
+            { key: "notification_preferences" },
+            { "value.categoryThresholds": catThresholds }
+          );
+        }
+      }
+
+      if (req.user?._id) {
+        await logActivity({
+          actorId: req.user._id,
+          action: "Admin added custom product category",
+          targetType: "Setting",
+          targetId: null,
+          description: `Created new category: "${name}"`,
+          metadata: { category: name },
+        });
+      }
+    }
+
+    const allCategories = Array.from(
+      new Set([...STANDARD_CATEGORIES, ...customCategories])
+    );
+
+    return successResponse(res, 201, `Category "${name}" added successfully`, {
+      name,
+      standardCategories: STANDARD_CATEGORIES,
+      customCategories,
+      categories: allCategories,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const removeCategory = async (req, res, next) => {
+  try {
+    const name = decodeURIComponent(req.params.name || "").trim();
+    if (!name) {
+      return errorResponse(res, 400, "Category name is required");
+    }
+
+    const isStandard = STANDARD_CATEGORIES.some((c) => c.toLowerCase() === name.toLowerCase());
+    if (isStandard) {
+      return errorResponse(res, 400, `Standard category "${name}" cannot be deleted.`);
+    }
+
+    const customCatSetting = await Setting.findOne({ key: "custom_categories" });
+    const customCategories = Array.isArray(customCatSetting?.value) ? customCatSetting.value : [];
+
+    const filtered = customCategories.filter((c) => c.toLowerCase() !== name.toLowerCase());
+
+    await Setting.findOneAndUpdate(
+      { key: "custom_categories" },
+      {
+        key: "custom_categories",
+        value: filtered,
+        updatedBy: req.user?._id || null,
+      },
+      { upsert: true, new: true }
+    );
+
+    // Remove from notification thresholds if present
+    const notifSetting = await Setting.findOne({ key: "notification_preferences" });
+    if (notifSetting?.value?.categoryThresholds) {
+      const thresholds = { ...notifSetting.value.categoryThresholds };
+      delete thresholds[name];
+      await Setting.findOneAndUpdate(
+        { key: "notification_preferences" },
+        { "value.categoryThresholds": thresholds }
+      );
+    }
+
+    if (req.user?._id) {
+      await logActivity({
+        actorId: req.user._id,
+        action: "Admin removed custom product category",
+        targetType: "Setting",
+        targetId: null,
+        description: `Removed custom category: "${name}"`,
+        metadata: { category: name },
+      });
+    }
+
+    const allCategories = Array.from(new Set([...STANDARD_CATEGORIES, ...filtered]));
+
+    return successResponse(res, 200, `Category "${name}" removed successfully`, {
+      standardCategories: STANDARD_CATEGORIES,
+      customCategories: filtered,
+      categories: allCategories,
+    });
   } catch (error) {
     next(error);
   }

@@ -8,7 +8,6 @@ import {
   validateUpdateInvoiceStatus,
 } from "../validators/invoiceValidator.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
-import { invoiceWriteLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router();
 
@@ -21,7 +20,6 @@ router.post(
   "/",
   protect,
   adminOrSubAdmin,
-  invoiceWriteLimiter,
   idempotency,
   validate(validateCreateInvoice),
   invoiceController.createCustomInvoice
@@ -31,12 +29,11 @@ router.patch(
   "/:id",
   protect,
   adminOrSubAdmin,
-  invoiceWriteLimiter,
   idempotency,
   validate(validateUpdateInvoiceStatus),
   invoiceController.updateInvoice
 );
 
-router.delete("/:id", protect, adminOrSubAdmin, invoiceWriteLimiter, idempotency, invoiceController.deleteInvoice);
+router.delete("/:id", protect, adminOrSubAdmin, idempotency, invoiceController.deleteInvoice);
 
 export default router;

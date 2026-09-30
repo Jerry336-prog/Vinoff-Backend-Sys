@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import rateLimit from "express-rate-limit";
 import { connectDB } from "./config/db.js";
 import { ENV } from "./config/env.js";
 
@@ -53,20 +52,6 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Idempotency-Key"],
   })
 );
-
-// Rate limiter for API routes
-const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // Fast recovery if a browser has a request loop
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    message: "Too many requests from this IP. Please try again in one minute.",
-  },
-});
-
-app.use("/api", apiLimiter);
 
 // Body parsers & cookies
 app.use(express.json({ limit: "50mb" }));

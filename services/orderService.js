@@ -7,6 +7,7 @@ import Setting from "../models/Setting.js";
 import { generateOrderNumber } from "../utils/generateOrderNumber.js";
 import { createInvoiceForOrder } from "./invoiceService.js";
 import { notifyAdmins, notifyUser, logActivity } from "./notificationService.js";
+import { sendOrderAlertEmail } from "./emailService.js";
 import { uploadBuffer } from "./cloudinaryService.js";
 
 const reserveInventory = async (requirements, productMap) => {
@@ -294,7 +295,22 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
     console.error("[WhatsApp Notification Error]:", err.message);
   }
 
-  return { order, invoice, chat };
+  // Instant Email Ping to Store Owner
+  sendOrderAlertEmail({
+    orderNumber,
+    customerName: `${customer.firstName} ${customer.lastName}`,
+    phone: customer.phone,
+    totalAmount,
+    itemsCount: processedItems.length,
+  }).catch(() => {});
+
+  return {
+    order,
+    invoice,
+    chat,
+    whatsappUrl: typeof whatsappUrl === "string" ? whatsappUrl : null,
+    whatsappNumber: typeof whatsappNumber === "string" ? whatsappNumber : null,
+  };
 };
 
 /**

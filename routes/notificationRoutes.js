@@ -2,11 +2,10 @@ import express from "express";
 import notificationController from "../controllers/notificationController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
-import { accountWriteLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router();
 
-router.use(protect, accountWriteLimiter, idempotency);
+router.use(protect, idempotency);
 
 router.get("/", notificationController.getNotifications);
 router.patch("/read-all", notificationController.markAllNotificationsAsRead);

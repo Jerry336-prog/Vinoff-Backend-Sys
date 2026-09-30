@@ -3,7 +3,6 @@ import messageController from "../controllers/messageController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { upload } from "../middleware/uploadMiddleware.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
-import { chatMessageLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router({ mergeParams: true });
 
@@ -13,7 +12,6 @@ router.get("/:id/messages", protect, messageController.getChatMessages);
 router.post(
   "/:id",
   protect,
-  chatMessageLimiter,
   idempotency,
   upload.array("attachments", 5),
   messageController.sendMessage
@@ -21,7 +19,6 @@ router.post(
 router.post(
   "/:id/messages",
   protect,
-  chatMessageLimiter,
   idempotency,
   upload.array("attachments", 5),
   messageController.sendMessage

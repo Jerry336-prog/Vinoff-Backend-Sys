@@ -11,13 +11,12 @@ import analyticsController from "../controllers/analyticsController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin } from "../middleware/adminMiddleware.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
-import { adminWriteLimiter } from "../middleware/rateLimiters.js";
 import { upload } from "../middleware/uploadMiddleware.js";
 
 const router = express.Router();
 
 // Apply auth and admin checks across all admin routes
-router.use(protect, adminOrSubAdmin, adminWriteLimiter, idempotency);
+router.use(protect, adminOrSubAdmin, idempotency);
 
 // Dashboard
 router.get("/dashboard", adminController.getDashboardStats);

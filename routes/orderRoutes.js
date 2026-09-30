@@ -6,24 +6,22 @@ import { upload } from "../middleware/uploadMiddleware.js";
 import { validate } from "../middleware/validationMiddleware.js";
 import { validateCreateOrder } from "../validators/orderValidator.js";
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
-import { orderWriteLimiter, paymentUploadLimiter } from "../middleware/rateLimiters.js";
 
 const router = express.Router();
 
-router.post("/", protect, orderWriteLimiter, idempotency, validate(validateCreateOrder), orderController.createOrder);
+router.post("/", protect, idempotency, validate(validateCreateOrder), orderController.createOrder);
 router.get("/", protect, orderController.getOrders);
 router.get("/:id", protect, orderController.getOrderById);
 router.post(
   "/:id/payment",
   protect,
-  paymentUploadLimiter,
   idempotency,
   upload.single("screenshot"),
   orderController.uploadPayment
 );
 
 // Order status updates (Admin)
-router.patch("/:id/status", protect, adminOrSubAdmin, orderWriteLimiter, idempotency, orderController.updateOrderStatus);
-router.post("/:id/confirm-payment", protect, adminOrSubAdmin, orderWriteLimiter, idempotency, orderController.confirmOrderPayment);
+router.patch("/:id/status", protect, adminOrSubAdmin, idempotency, orderController.updateOrderStatus);
+router.post("/:id/confirm-payment", protect, adminOrSubAdmin, idempotency, orderController.confirmOrderPayment);
 
 export default router;

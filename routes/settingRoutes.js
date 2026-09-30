@@ -9,6 +9,11 @@ import {
   getSessions,
   revokeOtherSessions,
   revokeSessionById,
+  getStoreLocation,
+  updateStoreLocation,
+  getCategories,
+  addCategory,
+  removeCategory,
 } from "../controllers/settingController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin, superAdminOnly } from "../middleware/adminMiddleware.js";
@@ -58,5 +63,36 @@ router.put(
 router.get("/sessions", protect, getSessions);
 router.post("/sessions/revoke-others", protect, revokeOtherSessions);
 router.delete("/sessions/:sessionId", protect, revokeSessionById);
+
+// ==========================================
+// 5. STORE LOCATION & WORKING STORE
+// ==========================================
+router.get("/store-location", getStoreLocation);
+router.put(
+  "/store-location",
+  protect,
+  adminOrSubAdmin,
+  idempotency,
+  updateStoreLocation
+);
+
+// ==========================================
+// 6. STORE / PRODUCT CATEGORIES
+// ==========================================
+router.get("/categories", getCategories);
+router.post(
+  "/categories",
+  protect,
+  adminOrSubAdmin,
+  idempotency,
+  addCategory
+);
+router.delete(
+  "/categories/:name",
+  protect,
+  adminOrSubAdmin,
+  idempotency,
+  removeCategory
+);
 
 export default router;
