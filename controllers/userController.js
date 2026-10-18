@@ -1,14 +1,28 @@
 import User from "../models/User.js";
 import { uploadBuffer } from "../services/cloudinaryService.js";
 import { notifyAdmins, logActivity } from "../services/notificationService.js";
+import { recalculateCustomerCredit } from "../services/creditService.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 
 /**
  * Get profile of current user
  * GET /api/users/me
  */
-export const getMyProfile = async (req, res) => {
-  return successResponse(res, 200, "Profile retrieved successfully", req.user);
+export const getMyProfile = async (req, res, next) => {
+  try {
+    const freshUser = await User.findById(req.user._id);
+    if (!freshUser) {
+      return errorResponse(res, 404, "User not found");
+    }
+    const outstandingCredit = await recalculateCustomerCredit(freshUser._id);
+    const userObj = freshUser.toJSON();
+    userObj.isVipCreditPartner = Boolean(freshUser.isVipCreditPartner);
+    userObj.outstandingCredit = outstandingCredit;
+    userObj.isOwingCredit = outstandingCredit > 0;
+    return successResponse(res, 200, "Profile retrieved successfully", userObj);
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -81,7 +95,13 @@ export const updateMyProfile = async (req, res, next) => {
       });
     }
 
-    return successResponse(res, 200, "Profile updated successfully", user);
+    const outstandingCredit = await recalculateCustomerCredit(user._id);
+    const userObj = user.toJSON();
+    userObj.isVipCreditPartner = Boolean(user.isVipCreditPartner);
+    userObj.outstandingCredit = outstandingCredit;
+    userObj.isOwingCredit = outstandingCredit > 0;
+
+    return successResponse(res, 200, "Profile updated successfully", userObj);
   } catch (error) {
     next(error);
   }
