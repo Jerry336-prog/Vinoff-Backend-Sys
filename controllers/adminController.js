@@ -5,8 +5,52 @@ import Invoice from "../models/Invoice.js";
 import Chat from "../models/Chat.js";
 import Notification from "../models/Notification.js";
 import ActivityLog from "../models/ActivityLog.js";
+import { recalculateCustomerCredit } from "../services/invoiceService.js";
+import { notifyUser } from "../services/notificationService.js";
 import { getPagination, formatPaginatedResponse } from "../utils/pagination.js";
 import { successResponse, errorResponse } from "../utils/response.js";
+
+/**
+ * Helper to enrich user documents with live unpaid credit invoice totals
+ */
+const enrichUsersWithLiveCredit = async (users) => {
+  if (!Array.isArray(users) || users.length === 0) return users;
+
+  const creditAgg = await Invoice.aggregate([
+    {
+      $match: {
+        $or: [
+          { status: "On Credit" },
+          { isCredit: true, status: { $nin: ["Paid", "Cancelled"] } },
+        ],
+      },
+    },
+    {
+      $group: {
+        _id: "$customer",
+        totalCredit: { $sum: "$total" },
+      },
+    },
+  ]);
+
+  const creditMap = new Map(
+    creditAgg.map((item) => [String(item._id), Number(item.totalCredit || 0)])
+  );
+
+  return users.map((u) => {
+    const obj = u.toJSON ? u.toJSON() : { ...u };
+    const uid = String(obj._id || obj.id);
+    const liveCredit = creditMap.get(uid) ?? 0;
+
+    if (Number(obj.outstandingCredit || 0) !== liveCredit) {
+      User.updateOne({ _id: obj._id }, { outstandingCredit: liveCredit }).catch(() => {});
+    }
+
+    obj.outstandingCredit = liveCredit;
+    obj.isOwingCredit = liveCredit > 0;
+    return obj;
+  });
+};
 
 /**
  * Get aggregated admin dashboard metrics
@@ -17,6 +61,7 @@ export const getDashboardStats = async (req, res, next) => {
     const [
       totalCustomers,
       customersWithUpdatedProfile,
+      vipCreditPartnersCount,
       totalProducts,
       lowStockProducts,
       totalOrders,
@@ -24,8 +69,10 @@ export const getDashboardStats = async (req, res, next) => {
       awaitingConfirmations,
       completedOrders,
       revenueResult,
+      standalonePaidInvoicesResult,
       totalInvoices,
       pendingInvoicesResult,
+      creditInvoicesResult,
       unreadAdminChats,
       unreadNotifications,
       recentActivity,
@@ -33,6 +80,7 @@ export const getDashboardStats = async (req, res, next) => {
       // Customers
       User.countDocuments({ role: "customer" }),
       User.countDocuments({ role: "customer", profileUpdatedAt: { $ne: null } }),
+      User.countDocuments({ role: "customer", isVipCreditPartner: true }),
 
       // Products
       Product.countDocuments(),
@@ -44,10 +92,21 @@ export const getDashboardStats = async (req, res, next) => {
       Order.countDocuments({ status: "Awaiting Confirmation" }),
       Order.countDocuments({ status: "Completed" }),
 
-      // Revenue: Sum totalAmount of orders with confirmed payments
+      // Revenue: Sum totalAmount of orders with confirmed payments (excludes unpaid credit orders)
       Order.aggregate([
         { $match: { paymentStatus: "Confirmed" } },
-        { $group: { _id: null, totalRevenue: { $sum: "$totalAmount" } } },
+        { $group: { _id: null, totalRevenue: { $sum: "$total" } } },
+      ]).then(async () =>
+        Order.aggregate([
+          { $match: { paymentStatus: "Confirmed" } },
+          { $group: { _id: null, totalRevenue: { $sum: "$totalAmount" } } },
+        ])
+      ),
+
+      // Standalone custom invoices marked Paid (not linked to an order)
+      Invoice.aggregate([
+        { $match: { status: "Paid", $or: [{ order: null }, { order: { $exists: false } }] } },
+        { $group: { _id: null, totalPaid: { $sum: "$total" } } },
       ]),
 
       // Invoices
@@ -55,6 +114,17 @@ export const getDashboardStats = async (req, res, next) => {
       Invoice.aggregate([
         { $match: { status: "Pending" } },
         { $group: { _id: null, count: { $sum: 1 }, totalPending: { $sum: "$total" } } },
+      ]),
+      Invoice.aggregate([
+        {
+          $match: {
+            $or: [
+              { status: "On Credit" },
+              { isCredit: true, status: { $nin: ["Paid", "Cancelled"] } },
+            ],
+          },
+        },
+        { $group: { _id: null, count: { $sum: 1 }, totalCreditOwing: { $sum: "$total" } } },
       ]),
 
       // Unread chats for admin
@@ -72,15 +142,22 @@ export const getDashboardStats = async (req, res, next) => {
         .limit(10),
     ]);
 
-    const totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+    const confirmedOrderRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
+    const standalonePaidRevenue =
+      standalonePaidInvoicesResult.length > 0 ? standalonePaidInvoicesResult[0].totalPaid : 0;
+    const totalRevenue = confirmedOrderRevenue + standalonePaidRevenue;
+
     const pendingInvoicesCount = pendingInvoicesResult.length > 0 ? pendingInvoicesResult[0].count : 0;
     const pendingInvoicesTotal = pendingInvoicesResult.length > 0 ? pendingInvoicesResult[0].totalPending : 0;
+    const creditInvoicesCount = creditInvoicesResult.length > 0 ? creditInvoicesResult[0].count : 0;
+    const totalOutstandingCredit = creditInvoicesResult.length > 0 ? creditInvoicesResult[0].totalCreditOwing : 0;
     const unreadMessagesCount = unreadAdminChats.length > 0 ? unreadAdminChats[0].totalUnread : 0;
 
     return successResponse(res, 200, "Dashboard metrics retrieved successfully", {
       customers: {
         total: totalCustomers,
         withProfileUpdates: customersWithUpdatedProfile,
+        vipCreditPartners: vipCreditPartnersCount,
       },
       products: {
         total: totalProducts,
@@ -97,6 +174,8 @@ export const getDashboardStats = async (req, res, next) => {
         total: totalInvoices,
         pendingCount: pendingInvoicesCount,
         pendingTotal: pendingInvoicesTotal,
+        creditCount: creditInvoicesCount,
+        totalOutstandingCredit,
       },
       communications: {
         unreadMessages: unreadMessagesCount,
@@ -116,7 +195,7 @@ export const getDashboardStats = async (req, res, next) => {
 export const getCustomers = async (req, res, next) => {
   try {
     const { page, limit, skip } = getPagination(req, 100);
-    const { search, status, profileUpdated } = req.query;
+    const { search, status, profileUpdated, vipCredit } = req.query;
 
     const query = { role: "customer" };
 
@@ -126,6 +205,10 @@ export const getCustomers = async (req, res, next) => {
 
     if (profileUpdated === "true") {
       query.profileUpdatedAt = { $ne: null };
+    }
+
+    if (vipCredit === "true") {
+      query.isVipCreditPartner = true;
     }
 
     if (search && search.trim()) {
@@ -144,7 +227,8 @@ export const getCustomers = async (req, res, next) => {
       User.countDocuments(query),
     ]);
 
-    const result = formatPaginatedResponse(customers, totalCount, page, limit);
+    const enrichedCustomers = await enrichUsersWithLiveCredit(customers);
+    const result = formatPaginatedResponse(enrichedCustomers, totalCount, page, limit);
     return successResponse(res, 200, "Customers retrieved successfully", result.items, result.pagination);
   } catch (error) {
     next(error);
@@ -162,7 +246,12 @@ export const getCustomerById = async (req, res, next) => {
       return errorResponse(res, 404, "User not found");
     }
 
-    return successResponse(res, 200, "Customer details retrieved", customer);
+    const liveCredit = await recalculateCustomerCredit(customer._id);
+    const customerObj = customer.toJSON ? customer.toJSON() : { ...customer };
+    customerObj.outstandingCredit = liveCredit;
+    customerObj.isOwingCredit = liveCredit > 0;
+
+    return successResponse(res, 200, "Customer details retrieved", customerObj);
   } catch (error) {
     next(error);
   }
@@ -197,6 +286,67 @@ export const updateCustomerStatus = async (req, res, next) => {
     });
 
     return successResponse(res, 200, `Customer status updated to '${status}'`, customer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Toggle or update customer VIP Credit Partner privilege
+ * PATCH /api/admin/customers/:id/vip-credit
+ */
+export const updateCustomerVipCredit = async (req, res, next) => {
+  try {
+    const { isVipCreditPartner } = req.body;
+    const customer = await User.findById(req.params.id);
+    if (!customer) {
+      return errorResponse(res, 404, "Customer not found");
+    }
+
+    const nextVipState =
+      typeof isVipCreditPartner === "boolean"
+        ? isVipCreditPartner
+        : !customer.isVipCreditPartner;
+
+    customer.isVipCreditPartner = nextVipState;
+    await customer.save();
+
+    const liveCredit = await recalculateCustomerCredit(customer._id);
+    const customerObj = customer.toJSON ? customer.toJSON() : { ...customer };
+    customerObj.outstandingCredit = liveCredit;
+    customerObj.isOwingCredit = liveCredit > 0;
+
+    await ActivityLog.create({
+      actor: req.user._id,
+      action: nextVipState
+        ? "Admin upgraded customer to VIP Credit Partner"
+        : "Admin revoked VIP Credit Partner status",
+      targetType: "User",
+      targetId: customer._id,
+      description: `Admin ${req.user.firstName} ${req.user.lastName} ${
+        nextVipState ? "granted" : "revoked"
+      } VIP Credit Partner status for ${customer.firstName} ${customer.lastName} (${customer.email})`,
+      metadata: { isVipCreditPartner: nextVipState, outstandingCredit: liveCredit },
+    });
+
+    await notifyUser({
+      recipientId: customer._id,
+      type: "VIP_CREDIT_UPDATED",
+      title: nextVipState ? "VIP Credit Partner Unlocked" : "VIP Credit Partner Status Updated",
+      message: nextVipState
+        ? "Congratulations! Your wholesale account has been upgraded to a VIP Credit Partner. You can now place orders on credit and track your credit invoices directly from your header."
+        : "Your VIP Credit Partner privilege has been updated by an administrator.",
+      relatedUser: customer._id,
+    }).catch(() => {});
+
+    return successResponse(
+      res,
+      200,
+      nextVipState
+        ? `${customer.firstName} ${customer.lastName} is now a VIP Credit Partner`
+        : `VIP Credit Partner status revoked for ${customer.firstName} ${customer.lastName}`,
+      customerObj
+    );
   } catch (error) {
     next(error);
   }
@@ -261,7 +411,8 @@ export const getUsers = async (req, res, next) => {
       User.countDocuments(query),
     ]);
 
-    const result = formatPaginatedResponse(users, totalCount, page, limit);
+    const enrichedUsers = await enrichUsersWithLiveCredit(users);
+    const result = formatPaginatedResponse(enrichedUsers, totalCount, page, limit);
     return successResponse(res, 200, "Users retrieved successfully", result.items, result.pagination);
   } catch (error) {
     next(error);
@@ -312,6 +463,7 @@ export default {
   getCustomers,
   getCustomerById,
   updateCustomerStatus,
+  updateCustomerVipCredit,
   getActivityLogs,
   getUsers,
   updateUserRole,

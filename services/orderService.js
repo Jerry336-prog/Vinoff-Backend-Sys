@@ -6,7 +6,7 @@ import Message from "../models/Message.js";
 import User from "../models/User.js";
 import Setting from "../models/Setting.js";
 import { generateOrderNumber } from "../utils/generateOrderNumber.js";
-import { createInvoiceForOrder } from "./invoiceService.js";
+import { createInvoiceForOrder, recalculateCustomerCredit } from "./invoiceService.js";
 import { notifyAdmins, notifyUser, logActivity } from "./notificationService.js";
 import { sendOrderAlertEmail } from "./emailService.js";
 import { uploadBuffer } from "./cloudinaryService.js";
@@ -19,7 +19,7 @@ const reserveInventory = async (requirements, productMap) => {
     for (const requirement of requirements.values()) {
       const product = productMap.get(requirement.productId);
       const available = Number(product?.[requirement.field] ?? 0);
-      const label = requirement.field === "stock" ? "carton" : "loose-unit";
+      const label = requirement.field === "carton" || requirement.field === "stock" ? "carton" : "loose-unit";
 
       if (available < requirement.quantity) {
         throw new Error(
@@ -108,7 +108,14 @@ const restoreInventory = async (adjustments) => {
 /**
  * Creates a wholesale order
  */
-export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = "" }) => {
+export const createOrder = async ({
+  customerId,
+  items,
+  deliveryFee = 0,
+  notes = "",
+  isCreditOrder = false,
+  paymentMethod = "bank_transfer",
+}) => {
   // Check store status / vacation mode
   const storeStatusSetting = await Setting.findOne({ key: "store_status" });
   if (storeStatusSetting && storeStatusSetting.value?.isOpen === false) {
@@ -125,6 +132,13 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
   const customer = await User.findById(customerId);
   if (!customer) {
     throw new Error("Customer not found");
+  }
+
+  const useVipCredit = Boolean(isCreditOrder || paymentMethod === "credit");
+  if (useVipCredit && !customer.isVipCreditPartner) {
+    throw new Error(
+      "Only approved VIP Credit Partners are eligible to place wholesale orders on credit."
+    );
   }
 
   const productIds = items.map((i) => i.productId || i.product);
@@ -207,8 +221,10 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
       subtotal,
       deliveryFee: Number(deliveryFee),
       totalAmount,
-      status: "Pending Payment",
-      paymentStatus: "Pending",
+      status: useVipCredit ? "Processing" : "Pending Payment",
+      paymentStatus: useVipCredit ? "On Credit" : "Pending",
+      isCreditOrder: useVipCredit,
+      paymentMethod: useVipCredit ? "credit" : paymentMethod || "bank_transfer",
       notes,
     });
   } catch (error) {
@@ -237,14 +253,16 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
   await Message.create({
     chat: chat._id,
     senderRole: "system",
-    content: `Order #${orderNumber} created. Total amount: ₦${totalAmount.toLocaleString()}. Please upload your payment screenshot to proceed.`,
+    content: useVipCredit
+      ? `VIP Credit Order #${orderNumber} placed on credit. Total credit amount: ₦${totalAmount.toLocaleString()} (Invoice #${invoice.invoiceNumber}).`
+      : `Order #${orderNumber} created. Total amount: ₦${totalAmount.toLocaleString()}. Please upload your payment screenshot to proceed.`,
   });
 
   // Notify Admins
   await notifyAdmins({
     type: "NEW_ORDER",
-    title: "New Wholesale Order",
-    message: `${customer.firstName} ${customer.lastName} placed Order #${orderNumber} (₦${totalAmount.toLocaleString()})`,
+    title: useVipCredit ? "New VIP Credit Order" : "New Wholesale Order",
+    message: `${customer.firstName} ${customer.lastName} placed ${useVipCredit ? "Credit " : ""}Order #${orderNumber} (₦${totalAmount.toLocaleString()})`,
     relatedUser: customerId,
     relatedOrder: order._id,
     relatedInvoice: invoice._id,
@@ -254,17 +272,17 @@ export const createOrder = async ({ customerId, items, deliveryFee = 0, notes = 
   // Log Activity
   await logActivity({
     actorId: customerId,
-    action: "Customer created order",
+    action: useVipCredit ? "VIP Customer placed credit order" : "Customer created order",
     targetType: "Order",
     targetId: order._id,
-    description: `Customer placed order #${orderNumber}`,
-    metadata: { orderNumber, totalAmount, itemsCount: processedItems.length },
+    description: `Customer placed ${useVipCredit ? "VIP credit " : ""}order #${orderNumber}`,
+    metadata: { orderNumber, totalAmount, itemsCount: processedItems.length, isCreditOrder: useVipCredit },
   });
 
   // Instant Email Ping to Store Owner and Admins (non-blocking async background)
   sendOrderAlertEmail({
     orderNumber,
-    customerName: `${customer.firstName} ${customer.lastName}`,
+    customerName: `${customer.firstName} ${customer.lastName}${useVipCredit ? " (VIP Credit)" : ""}`,
     phone: customer.phone,
     totalAmount,
     itemsCount: processedItems.length,
@@ -369,10 +387,23 @@ export const confirmPayment = async (orderId, adminId) => {
   order.status = "Payment Confirmed";
   await order.save();
 
-  // Update associated invoice to 'Paid' (Draft, Pending, Paid, Cancelled ONLY)
+  // Update associated invoice to 'Paid' and settle credit if applicable
   if (order.invoice) {
     const Invoice = (await import("../models/Invoice.js")).default;
-    await Invoice.findByIdAndUpdate(order.invoice, { status: "Paid" });
+    const inv = await Invoice.findById(order.invoice);
+    if (inv) {
+      inv.status = "Paid";
+      if (inv.isCredit || order.isCreditOrder) {
+        inv.isCredit = true;
+        inv.creditSettledAt = new Date();
+      }
+      await inv.save();
+    }
+  }
+
+  // Recalculate customer's outstanding credit balance
+  if (order.customer?._id || order.customer) {
+    await recalculateCustomerCredit(order.customer?._id || order.customer);
   }
 
   // Notify customer

@@ -30,7 +30,7 @@ const invoiceItemSchema = new mongoose.Schema(
   { _id: false }
 );
 
-export const INVOICE_STATUSES = ["Draft", "Pending", "Paid", "Cancelled"];
+export const INVOICE_STATUSES = ["Draft", "Pending", "On Credit", "Paid", "Cancelled"];
 
 const invoiceSchema = new mongoose.Schema(
   {
@@ -83,10 +83,19 @@ const invoiceSchema = new mongoose.Schema(
       type: String,
       enum: {
         values: INVOICE_STATUSES,
-        message: "{VALUE} is not a valid invoice status. Must be Draft, Pending, Paid, or Cancelled.",
+        message: "{VALUE} is not a valid invoice status. Must be Draft, Pending, On Credit, Paid, or Cancelled.",
       },
       default: "Pending",
       index: true,
+    },
+    isCredit: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    creditSettledAt: {
+      type: Date,
+      default: null,
     },
     dueDate: {
       type: Date,

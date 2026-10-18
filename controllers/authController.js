@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import User from "../models/User.js";
 import { sendTokenResponse } from "../services/authService.js";
+import { recalculateCustomerCredit } from "../services/invoiceService.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 import { logActivity, notifyAdmins } from "../services/notificationService.js";
 import { parseClientInfo } from "../utils/deviceParser.js";
@@ -116,6 +117,9 @@ export const login = async (req, res, next) => {
       user.sessions = user.sessions.slice(0, 15);
     }
 
+    const liveCredit = await recalculateCustomerCredit(user._id);
+    user.outstandingCredit = liveCredit;
+
     await user.save({ validateBeforeSave: false });
 
     return sendTokenResponse(res, user, 200, "Login successful", sessionId);
@@ -141,8 +145,16 @@ export const logout = (req, res) => {
  * Get current authenticated user
  * GET /api/auth/me
  */
-export const getMe = async (req, res) => {
-  return successResponse(res, 200, "User profile retrieved", req.user);
+export const getMe = async (req, res, next) => {
+  try {
+    const liveCredit = await recalculateCustomerCredit(req.user._id);
+    const userObj = req.user.toJSON ? req.user.toJSON() : { ...req.user };
+    userObj.outstandingCredit = liveCredit;
+    userObj.isOwingCredit = liveCredit > 0;
+    return successResponse(res, 200, "User profile retrieved", userObj);
+  } catch (error) {
+    next(error);
+  }
 };
 
 export default {

@@ -44,6 +44,16 @@ const userSchema = new mongoose.Schema(
       default: "active",
       index: true,
     },
+    isVipCreditPartner: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    outstandingCredit: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     profile: {
       companyName: { type: String, trim: true, default: "" },
       businessType: { type: String, trim: true, default: "" },
@@ -85,6 +95,7 @@ const userSchema = new mongoose.Schema(
         delete ret.password;
         ret.id = ret._id;
         ret.avatarUrl = ret.profile?.avatar?.url || "";
+        ret.isOwingCredit = Number(ret.outstandingCredit || 0) > 0;
         return ret;
       },
     },
@@ -94,6 +105,7 @@ const userSchema = new mongoose.Schema(
         delete ret.password;
         ret.id = ret._id;
         ret.avatarUrl = ret.profile?.avatar?.url || "";
+        ret.isOwingCredit = Number(ret.outstandingCredit || 0) > 0;
         return ret;
       },
     },

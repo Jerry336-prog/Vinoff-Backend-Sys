@@ -30,11 +30,12 @@ export const getBankDetails = async (req, res, next) => {
 
 export const updateBankDetails = async (req, res, next) => {
   try {
-    if (!req.user || req.user.role !== "superadmin") {
+    const allowedRoles = ["admin", "subAdmin", "superadmin", "super_admin"];
+    if (!req.user || !allowedRoles.includes(req.user.role)) {
       return errorResponse(
         res,
         403,
-        "Access denied. Only Super Admin accounts can modify company bank details."
+        "Access denied. Only Admin accounts can modify company bank details."
       );
     }
 
@@ -69,10 +70,10 @@ export const updateBankDetails = async (req, res, next) => {
 
     await logActivity({
       actorId: req.user._id,
-      action: "Super Admin updated company bank account details",
+      action: "Admin updated company bank account details",
       targetType: "Setting",
       targetId: setting._id,
-      description: `Super Admin updated bank details: ${updatedDetails.bankName} (${updatedDetails.accountNumber})`,
+      description: `Admin updated bank details: ${updatedDetails.bankName} (${updatedDetails.accountNumber})`,
       metadata: updatedDetails,
     });
 
@@ -450,22 +451,42 @@ export const revokeSessionById = async (req, res, next) => {
 };
 
 // ==========================================
-// 5. STORE LOCATION & WORKING STORE
+// 5. STORE LOCATION & BUSINESS ACCOUNT INFO
 // ==========================================
-const DEFAULT_STORE_LOCATION = {
+export const DEFAULT_STORE_LOCATION = {
+  businessName: "Vinoff Wholesales Ltd",
+  brandTitle: "VINOFF WHOLESALES",
+  tagline: "Commercial Toiletries, Sanitizers & Industrial Detergents",
+  headerSubtitle: "Toiletries & Household",
+  watermarkText: "VINOFF & CO.NIG.LTD",
+  emailContact: "sales@vinoff.com",
+  supportEmail: "support@vinoff.com",
+  phoneContact: "+234 80 1234 5678",
+  secondaryPhone: "+234 803 000 0000",
   shopAddress: "KADUNA PLAZA 1, BLOCK A, SHOP 22",
   complexArea: "INT’L CENTRE FOR COMMERCE, TRADE-FAIR COMPLEX",
   cityState: "BADAGRY EXPRESS WAY, LAGOS, NIGERIA",
-  operatingHours: "Monday – Saturday: 8:00 AM – 5:30 PM",
-  phoneContact: "+234 803 000 0000",
-  walkthroughVideoUrl: "/VINOFF_C0_walkthrough.MP4",
+  operatingHours: "Monday – Saturday: 8:00 AM – 6:00 PM",
+  googleMapsUrl: "https://maps.google.com/?q=Trade+Fair+Complex+Badagry+Expressway+Lagos",
+  walkthroughVideoUrl: "/store/VINOFF_CO_walkthrough.MP4",
+  footerNote:
+    "Wire payments transfer slips proof must be submitted in support chats to begin packing and logistics.",
 };
 
 export const getStoreLocation = async (req, res, next) => {
   try {
     const setting = await Setting.findOne({ key: "store_location" });
-    const storeLocation = setting ? { ...DEFAULT_STORE_LOCATION, ...setting.value } : DEFAULT_STORE_LOCATION;
-    return successResponse(res, 200, "Store location details retrieved successfully", storeLocation);
+    const storeLocation = setting ? { ...DEFAULT_STORE_LOCATION, ...setting.value } : { ...DEFAULT_STORE_LOCATION };
+
+    // Normalize legacy typo video URL if present
+    if (
+      storeLocation.walkthroughVideoUrl === "/VINOFF_C0_walkthrough.MP4" ||
+      storeLocation.walkthroughVideoUrl === "/VINOFF_CO_walkthrough.MP4"
+    ) {
+      storeLocation.walkthroughVideoUrl = "/store/VINOFF_CO_walkthrough.MP4";
+    }
+
+    return successResponse(res, 200, "Business and store details retrieved successfully", storeLocation);
   } catch (error) {
     next(error);
   }
@@ -473,40 +494,53 @@ export const getStoreLocation = async (req, res, next) => {
 
 export const updateStoreLocation = async (req, res, next) => {
   try {
+    const existingSetting = await Setting.findOne({ key: "store_location" });
+    const current = { ...DEFAULT_STORE_LOCATION, ...(existingSetting?.value || {}) };
+
+    const pickStr = (val, fallback, allowEmpty = false) => {
+      if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed || allowEmpty) return trimmed;
+      }
+      return fallback;
+    };
+
     const {
+      businessName,
+      brandTitle,
+      tagline,
+      headerSubtitle,
+      watermarkText,
+      emailContact,
+      supportEmail,
+      phoneContact,
+      secondaryPhone,
       shopAddress,
       complexArea,
       cityState,
       operatingHours,
-      phoneContact,
+      googleMapsUrl,
       walkthroughVideoUrl,
+      footerNote,
     } = req.body;
 
     const updated = {
-      shopAddress:
-        typeof shopAddress === "string" && shopAddress.trim()
-          ? shopAddress.trim()
-          : DEFAULT_STORE_LOCATION.shopAddress,
-      complexArea:
-        typeof complexArea === "string" && complexArea.trim()
-          ? complexArea.trim()
-          : DEFAULT_STORE_LOCATION.complexArea,
-      cityState:
-        typeof cityState === "string" && cityState.trim()
-          ? cityState.trim()
-          : DEFAULT_STORE_LOCATION.cityState,
-      operatingHours:
-        typeof operatingHours === "string" && operatingHours.trim()
-          ? operatingHours.trim()
-          : DEFAULT_STORE_LOCATION.operatingHours,
-      phoneContact:
-        typeof phoneContact === "string" && phoneContact.trim()
-          ? phoneContact.trim()
-          : DEFAULT_STORE_LOCATION.phoneContact,
-      walkthroughVideoUrl:
-        typeof walkthroughVideoUrl === "string" && walkthroughVideoUrl.trim()
-          ? walkthroughVideoUrl.trim()
-          : DEFAULT_STORE_LOCATION.walkthroughVideoUrl,
+      businessName: pickStr(businessName, current.businessName),
+      brandTitle: pickStr(brandTitle, current.brandTitle),
+      tagline: pickStr(tagline, current.tagline),
+      headerSubtitle: pickStr(headerSubtitle, current.headerSubtitle),
+      watermarkText: pickStr(watermarkText, current.watermarkText),
+      emailContact: pickStr(emailContact, current.emailContact),
+      supportEmail: pickStr(supportEmail, current.supportEmail),
+      phoneContact: pickStr(phoneContact, current.phoneContact),
+      secondaryPhone: pickStr(secondaryPhone, current.secondaryPhone, true),
+      shopAddress: pickStr(shopAddress, current.shopAddress),
+      complexArea: pickStr(complexArea, current.complexArea),
+      cityState: pickStr(cityState, current.cityState),
+      operatingHours: pickStr(operatingHours, current.operatingHours),
+      googleMapsUrl: pickStr(googleMapsUrl, current.googleMapsUrl),
+      walkthroughVideoUrl: pickStr(walkthroughVideoUrl, current.walkthroughVideoUrl),
+      footerNote: pickStr(footerNote, current.footerNote, true),
       updatedAt: new Date(),
     };
 
@@ -522,14 +556,14 @@ export const updateStoreLocation = async (req, res, next) => {
 
     await logActivity({
       actorId: req.user._id,
-      action: "Admin updated store location details",
+      action: "Admin updated business & store contact details",
       targetType: "Setting",
       targetId: setting._id,
-      description: `Store location updated: ${updated.shopAddress}, ${updated.complexArea}, ${updated.cityState}`,
+      description: `Business details updated: ${updated.businessName} | Tel: ${updated.phoneContact} | Email: ${updated.emailContact} | Address: ${updated.shopAddress}`,
       metadata: updated,
     });
 
-    return successResponse(res, 200, "Store location details updated successfully", setting.value);
+    return successResponse(res, 200, "Business and store details updated successfully", setting.value);
   } catch (error) {
     next(error);
   }

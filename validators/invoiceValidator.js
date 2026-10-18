@@ -29,9 +29,7 @@ export const validateCreateInvoice = (body) => {
 
 export const validateUpdateInvoiceStatus = (body) => {
   const errors = {};
-  if (!body.status) {
-    errors.status = "Status is required";
-  } else if (!INVOICE_STATUSES.includes(body.status)) {
+  if (body.status && !INVOICE_STATUSES.includes(body.status)) {
     errors.status = `Invalid status '${body.status}'. Valid statuses are strictly: ${INVOICE_STATUSES.join(", ")}`;
   }
   return errors;

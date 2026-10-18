@@ -15,12 +15,14 @@ import { successResponse, errorResponse } from "../utils/response.js";
  */
 export const createOrder = async (req, res, next) => {
   try {
-    const { items, deliveryFee, notes } = req.body;
+    const { items, deliveryFee, notes, isCreditOrder, paymentMethod } = req.body;
     const result = await createOrderService({
       customerId: req.user._id,
       items,
       deliveryFee,
       notes,
+      isCreditOrder,
+      paymentMethod,
     });
     return successResponse(res, 201, "Order placed successfully", result);
   } catch (error) {
@@ -35,15 +37,16 @@ export const createOrder = async (req, res, next) => {
 export const getOrders = async (req, res, next) => {
   try {
     const { page, limit, skip } = getPagination(req, 20);
-    const { status, paymentStatus, customerId } = req.query;
+    const { status, paymentStatus, customerId, customer } = req.query;
 
     const query = {};
+    const targetCustomer = customerId || customer;
 
     // Role-based scoping
     if (req.user.role === "customer") {
       query.customer = req.user._id;
-    } else if (customerId) {
-      query.customer = customerId;
+    } else if (targetCustomer) {
+      query.customer = targetCustomer;
     }
 
     if (status) {
@@ -56,8 +59,8 @@ export const getOrders = async (req, res, next) => {
 
     const [orders, totalCount] = await Promise.all([
       Order.find(query)
-        .populate("customer", "firstName lastName email phone profile")
-        .populate("invoice", "invoiceNumber status total")
+        .populate("customer", "firstName lastName email phone profile isVipCreditPartner outstandingCredit")
+        .populate("invoice", "invoiceNumber status total isCredit creditSettledAt")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
@@ -81,7 +84,7 @@ export const getOrderById = async (req, res, next) => {
     const query = isObjectId ? { _id: req.params.id } : { orderNumber: req.params.id };
 
     const order = await Order.findOne(query)
-      .populate("customer", "firstName lastName email phone profile")
+      .populate("customer", "firstName lastName email phone profile isVipCreditPartner outstandingCredit")
       .populate("invoice");
 
     if (!order) {

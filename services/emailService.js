@@ -1,5 +1,26 @@
 import nodemailer from "nodemailer";
 import User from "../models/User.js";
+import Setting from "../models/Setting.js";
+
+const getLiveBusinessInfo = async () => {
+  const defaults = {
+    businessName: "Vinoff Wholesales Ltd",
+    brandTitle: "VINOFF WHOLESALES",
+    tagline: "Commercial Toiletries, Sanitizers & Industrial Detergents",
+    emailContact: "sales@vinoff.com",
+    phoneContact: "+234 80 1234 5678",
+    shopAddress: "KADUNA PLAZA 1, BLOCK A, SHOP 22",
+    complexArea: "INT’L CENTRE FOR COMMERCE, TRADE-FAIR COMPLEX",
+    cityState: "BADAGRY EXPRESS WAY, LAGOS, NIGERIA",
+    operatingHours: "Monday – Saturday: 8:00 AM – 6:00 PM",
+  };
+  try {
+    const setting = await Setting.findOne({ key: "store_location" });
+    return setting && setting.value ? { ...defaults, ...setting.value } : defaults;
+  } catch (_) {
+    return defaults;
+  }
+};
 
 /**
  * Sends email via Resend HTTP API (Port 443 - works on Render Free Tier without SMTP blocks)
@@ -233,6 +254,7 @@ export const sendOrderAlertEmail = async ({
             .join("")
         : `<tr><td colspan="3" style="padding: 8px 4px; color: #64748b;">${itemsCount || 1} product(s) ordered</td></tr>`;
 
+    const biz = await getLiveBusinessInfo();
     const clientUrl = (process.env.CLIENT_URL || "https://vinoff-web.vercel.app").replace(/\/+$/, "");
     const orderPageUrl = `${clientUrl}/orders/${orderNumber}`;
     const adminDeskUrl = `${clientUrl}/admin/orders?order=${orderNumber}`;
@@ -242,7 +264,7 @@ export const sendOrderAlertEmail = async ({
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
         <div style="text-align: center; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
           <h2 style="color: #15803d; margin: 0; font-size: 20px;">📦 New Wholesale Order Received!</h2>
-          <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">Vinoff Wholesales Order Notification</p>
+          <p style="color: #64748b; font-size: 13px; margin: 4px 0 0;">${biz.businessName} Order Notification</p>
         </div>
 
         <div style="margin: 20px 0; padding: 16px; background-color: #f8fafc; border-radius: 12px;">
@@ -294,7 +316,8 @@ export const sendOrderAlertEmail = async ({
 
         <div style="padding-top: 16px; border-top: 1px solid #e2e8f0; text-align: center;">
           <p style="font-size: 12px; color: #64748b; margin: 0;">
-            Kaduna Plaza 1, Block A, Shop 22, Int’l Centre for Commerce, Trade-Fair Complex, Lagos.
+            ${biz.shopAddress}, ${biz.complexArea}, ${biz.cityState}.<br/>
+            Tel: ${biz.phoneContact} &bull; Email: ${biz.emailContact}
           </p>
         </div>
       </div>
@@ -328,23 +351,24 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
     const recipient = (email || "").toLowerCase().trim();
     if (!recipient) return { success: false, reason: "Missing recipient email" };
 
+    const biz = await getLiveBusinessInfo();
     const clientUrl = (process.env.CLIENT_URL || "https://vinoff-web.vercel.app").replace(/\/+$/, "");
     const catalogUrl = `${clientUrl}/shop`;
 
     const name = firstName ? `${firstName} ${lastName || ""}`.trim() : "Valued Customer";
-    const subject = `👋 Welcome to Vinoff Wholesales Ltd, ${firstName || "Partner"}!`;
+    const subject = `👋 Welcome to ${biz.businessName}, ${firstName || "Partner"}!`;
 
     const html = `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 16px; background-color: #ffffff;">
         <div style="text-align: center; padding-bottom: 20px; border-bottom: 1px solid #e2e8f0;">
-          <h1 style="color: #15803d; margin: 0; font-size: 24px; font-weight: 800;">VINOFF WHOLESALES</h1>
-          <p style="color: #64748b; font-size: 13px; margin: 6px 0 0;">Commercial Toiletries, Sanitizers &amp; Industrial Detergents</p>
+          <h1 style="color: #15803d; margin: 0; font-size: 24px; font-weight: 800;">${biz.brandTitle}</h1>
+          <p style="color: #64748b; font-size: 13px; margin: 6px 0 0;">${biz.tagline}</p>
         </div>
 
         <div style="margin: 24px 0;">
           <h2 style="color: #0f172a; font-size: 18px; margin-top: 0;">Welcome aboard, ${name}! 🎉</h2>
           <p style="color: #334155; font-size: 14px; line-height: 1.6;">
-            Thank you for creating an account with <strong>Vinoff Wholesales Ltd</strong>. Your wholesale access is now active and ready to use.
+            Thank you for creating an account with <strong>${biz.businessName}</strong>. Your wholesale access is now active and ready to use.
           </p>
 
           <div style="margin: 20px 0; padding: 18px; background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px;">
@@ -365,10 +389,11 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
 
           <div style="margin: 20px 0; padding: 16px; background-color: #f8fafc; border-radius: 12px; font-size: 13px; color: #475569; line-height: 1.5;">
             <strong style="color: #0f172a;">📍 Physical Warehouse &amp; Showroom:</strong><br/>
-            KADUNA PLAZA 1, BLOCK A, SHOP 22,<br/>
-            Int’l Centre for Commerce, Trade-Fair Complex,<br/>
-            Badagry Express Way, Lagos, Nigeria.<br/>
-            Operating Hours: Monday – Saturday: 8:00 AM – 5:30 PM
+            ${biz.shopAddress},<br/>
+            ${biz.complexArea},<br/>
+            ${biz.cityState}.<br/>
+            Operating Hours: ${biz.operatingHours}<br/>
+            Phone: ${biz.phoneContact} &bull; Email: ${biz.emailContact}
           </div>
 
           <p style="color: #64748b; font-size: 12px; line-height: 1.5;">
@@ -377,7 +402,7 @@ export const sendWelcomeEmail = async ({ email, firstName, lastName }) => {
         </div>
 
         <div style="padding-top: 16px; border-top: 1px solid #e2e8f0; text-align: center; color: #94a3b8; font-size: 11px;">
-          &copy; ${new Date().getFullYear()} Vinoff Wholesales Ltd. All rights reserved.
+          &copy; ${new Date().getFullYear()} ${biz.businessName}. All rights reserved.
         </div>
       </div>
     `;

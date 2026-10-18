@@ -1,6 +1,37 @@
+import mongoose from "mongoose";
 import Invoice, { INVOICE_STATUSES } from "../models/Invoice.js";
+import User from "../models/User.js";
 import { generateInvoiceNumber } from "../utils/generateInvoiceNumber.js";
 import { notifyUser, logActivity } from "./notificationService.js";
+
+/**
+ * Recalculates and persists a customer's total unpaid credit balance from their active credit invoices.
+ */
+export const recalculateCustomerCredit = async (customerId) => {
+  if (!customerId || !mongoose.isValidObjectId(customerId)) return 0;
+
+  const result = await Invoice.aggregate([
+    {
+      $match: {
+        customer: new mongoose.Types.ObjectId(String(customerId)),
+        $or: [
+          { status: "On Credit" },
+          { isCredit: true, status: { $nin: ["Paid", "Cancelled"] } },
+        ],
+      },
+    },
+    {
+      $group: {
+        _id: null,
+        totalCredit: { $sum: "$total" },
+      },
+    },
+  ]);
+
+  const outstandingCredit = result.length > 0 ? Number(result[0].totalCredit || 0) : 0;
+  await User.findByIdAndUpdate(customerId, { outstandingCredit });
+  return outstandingCredit;
+};
 
 /**
  * Creates an invoice directly linked to an order
@@ -32,6 +63,19 @@ export const createInvoiceForOrder = async (order) => {
     };
   });
 
+  const isCredit = Boolean(
+    order.isCreditOrder ||
+      order.paymentStatus === "On Credit" ||
+      order.paymentMethod === "credit"
+  );
+
+  let initialStatus = "Pending";
+  if (order.paymentStatus === "Confirmed") {
+    initialStatus = "Paid";
+  } else if (isCredit) {
+    initialStatus = "On Credit";
+  }
+
   const invoice = await Invoice.create({
     invoiceNumber,
     order: order._id,
@@ -40,9 +84,14 @@ export const createInvoiceForOrder = async (order) => {
     subtotal: order.subtotal,
     deliveryFee: order.deliveryFee || 0,
     total: order.totalAmount,
-    status: order.paymentStatus === "Confirmed" ? "Paid" : "Pending",
+    status: initialStatus,
+    isCredit,
     notes: order.notes || `Invoice for Order #${order.orderNumber}`,
   });
+
+  if (isCredit) {
+    await recalculateCustomerCredit(order.customer);
+  }
 
   return invoice;
 };
@@ -59,11 +108,16 @@ export const createCustomInvoice = async ({
   dueDate,
   notes = "",
   status = "Pending",
+  isCredit = false,
+  issuedBy = "",
   createdBy,
 }) => {
-  if (!INVOICE_STATUSES.includes(status)) {
+  const effectiveIsCredit = Boolean(isCredit || status === "On Credit");
+  const effectiveStatus = effectiveIsCredit && status === "Pending" ? "On Credit" : status;
+
+  if (!INVOICE_STATUSES.includes(effectiveStatus)) {
     throw new Error(
-      `Invalid invoice status: '${status}'. Allowed statuses: ${INVOICE_STATUSES.join(", ")}`
+      `Invalid invoice status: '${effectiveStatus}'. Allowed statuses: ${INVOICE_STATUSES.join(", ")}`
     );
   }
 
@@ -102,11 +156,16 @@ export const createCustomInvoice = async ({
     discount: Number(discount),
     deliveryFee: Number(deliveryFee),
     total: finalTotal,
-    status,
+    status: effectiveStatus,
+    isCredit: effectiveIsCredit,
+    creditSettledAt: effectiveIsCredit && effectiveStatus === "Paid" ? new Date() : null,
     dueDate: dueDate ? new Date(dueDate) : null,
     notes,
+    issuedBy,
     createdBy,
   });
+
+  await recalculateCustomerCredit(customer);
 
   // --- Deduct inventory for items that reference a product ---
   const itemsWithProducts = processedItems.filter((i) => i.product);
@@ -158,8 +217,8 @@ export const createCustomInvoice = async ({
   await notifyUser({
     recipientId: customer,
     type: "INVOICE_CREATED",
-    title: "New Invoice Issued",
-    message: `Invoice #${invoiceNumber} for ₦${finalTotal.toLocaleString()} has been issued to you.`,
+    title: effectiveIsCredit ? "New Credit Invoice Issued" : "New Invoice Issued",
+    message: `Invoice #${invoiceNumber} for ₦${finalTotal.toLocaleString()} has been issued to you${effectiveIsCredit ? " on VIP Credit" : ""}.`,
     relatedInvoice: invoice._id,
   });
 
@@ -170,14 +229,14 @@ export const createCustomInvoice = async ({
     targetType: "Invoice",
     targetId: invoice._id,
     description: `Admin created custom invoice #${invoiceNumber} for customer`,
-    metadata: { invoiceNumber, total: finalTotal, status },
+    metadata: { invoiceNumber, total: finalTotal, status: effectiveStatus, isCredit: effectiveIsCredit },
   });
 
   return invoice;
 };
 
 /**
- * Updates invoice status
+ * Updates invoice status and synchronizes customer credit balance & linked order payment status
  */
 export const updateInvoiceStatus = async (invoiceId, newStatus, actorId) => {
   if (!INVOICE_STATUSES.includes(newStatus)) {
@@ -193,7 +252,36 @@ export const updateInvoiceStatus = async (invoiceId, newStatus, actorId) => {
 
   const previousStatus = invoice.status;
   invoice.status = newStatus;
+
+  if (newStatus === "On Credit") {
+    invoice.isCredit = true;
+    invoice.creditSettledAt = null;
+  } else if (newStatus === "Paid" && (invoice.isCredit || previousStatus === "On Credit")) {
+    invoice.isCredit = true;
+    invoice.creditSettledAt = new Date();
+  }
+
   await invoice.save();
+
+  // If invoice is linked to an order and marked Paid, sync order paymentStatus to Confirmed
+  if (invoice.order && newStatus === "Paid") {
+    try {
+      const Order = (await import("../models/Order.js")).default;
+      const linkedOrder = await Order.findById(invoice.order);
+      if (linkedOrder && linkedOrder.paymentStatus !== "Confirmed") {
+        linkedOrder.paymentStatus = "Confirmed";
+        if (linkedOrder.status === "Pending Payment" || linkedOrder.status === "Awaiting Confirmation") {
+          linkedOrder.status = "Payment Confirmed";
+        }
+        await linkedOrder.save();
+      }
+    } catch (ordErr) {
+      console.warn("[invoiceService] Linked order payment sync error:", ordErr.message);
+    }
+  }
+
+  // Recalculate customer's outstanding credit balance
+  await recalculateCustomerCredit(invoice.customer);
 
   // Log activity
   await logActivity({
@@ -202,13 +290,14 @@ export const updateInvoiceStatus = async (invoiceId, newStatus, actorId) => {
     targetType: "Invoice",
     targetId: invoice._id,
     description: `Invoice #${invoice.invoiceNumber} status changed from ${previousStatus} to ${newStatus}`,
-    metadata: { previousStatus, newStatus },
+    metadata: { previousStatus, newStatus, isCredit: invoice.isCredit },
   });
 
   return invoice;
 };
 
 export default {
+  recalculateCustomerCredit,
   createInvoiceForOrder,
   createCustomInvoice,
   updateInvoiceStatus,

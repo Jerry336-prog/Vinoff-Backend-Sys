@@ -27,6 +27,7 @@ router.patch("/users/:id/role", adminController.updateUserRole);
 router.get("/customers", adminController.getCustomers);
 router.get("/customers/:id", adminController.getCustomerById);
 router.patch("/customers/:id/status", adminController.updateCustomerStatus);
+router.patch("/customers/:id/vip-credit", adminController.updateCustomerVipCredit);
 
 // Product management routes for admin
 router.get("/products", productController.getProducts);

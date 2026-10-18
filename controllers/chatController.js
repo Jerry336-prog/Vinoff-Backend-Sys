@@ -5,7 +5,7 @@ import Message from "../models/Message.js";
 import { getPagination, formatPaginatedResponse } from "../utils/pagination.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 
-const CUSTOMER_POPULATE = "firstName lastName email phone role profile";
+const CUSTOMER_POPULATE = "firstName lastName email phone role profile isVipCreditPartner outstandingCredit";
 
 const normalizeChatStatus = (status) => {
   const raw = String(status || "open").trim();

@@ -29,7 +29,7 @@ router.get("/bank-details", getBankDetails);
 router.put(
   "/bank-details",
   protect,
-  superAdminOnly,
+  adminOrSubAdmin,
   idempotency,
   updateBankDetails
 );
@@ -72,11 +72,19 @@ router.post("/sessions/revoke-others", protect, revokeOtherSessions);
 router.delete("/sessions/:sessionId", protect, revokeSessionById);
 
 // ==========================================
-// 5. STORE LOCATION & WORKING STORE
+// 5. STORE LOCATION & BUSINESS ACCOUNT INFO
 // ==========================================
 router.get("/store-location", getStoreLocation);
 router.put(
   "/store-location",
+  protect,
+  adminOrSubAdmin,
+  idempotency,
+  updateStoreLocation
+);
+router.get("/business-info", getStoreLocation);
+router.put(
+  "/business-info",
   protect,
   adminOrSubAdmin,
   idempotency,

@@ -68,7 +68,7 @@ export const ORDER_STATUSES = [
   "Cancelled",
 ];
 
-export const PAYMENT_STATUSES = ["Pending", "Submitted", "Confirmed", "Failed"];
+export const PAYMENT_STATUSES = ["Pending", "On Credit", "Submitted", "Confirmed", "Failed"];
 
 const orderSchema = new mongoose.Schema(
   {
@@ -118,6 +118,16 @@ const orderSchema = new mongoose.Schema(
       enum: PAYMENT_STATUSES,
       default: "Pending",
       index: true,
+    },
+    isCreditOrder: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    paymentMethod: {
+      type: String,
+      enum: ["bank_transfer", "credit", "paystack"],
+      default: "bank_transfer",
     },
     paymentScreenshot: {
       type: paymentScreenshotSchema,
