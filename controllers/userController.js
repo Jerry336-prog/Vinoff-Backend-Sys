@@ -1,7 +1,7 @@
 import User from "../models/User.js";
 import { uploadBuffer } from "../services/cloudinaryService.js";
 import { notifyAdmins, logActivity } from "../services/notificationService.js";
-import { recalculateCustomerCredit } from "../services/creditService.js";
+import { recalculateCustomerCredit } from "../services/invoiceService.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 
 /**
@@ -53,8 +53,10 @@ export const updateMyProfile = async (req, res, next) => {
     if (phone !== undefined) user.phone = phone.trim();
 
     // Update profile subdocument fields
-    if (companyName !== undefined) user.profile.companyName = companyName.trim();
-    if (businessType !== undefined) user.profile.businessType = businessType.trim();
+    if (companyName !== undefined)
+      user.profile.companyName = companyName.trim();
+    if (businessType !== undefined)
+      user.profile.businessType = businessType.trim();
     if (address !== undefined) user.profile.address = address.trim();
     if (city !== undefined) user.profile.city = city.trim();
     if (state !== undefined) user.profile.state = state.trim();
@@ -62,7 +64,10 @@ export const updateMyProfile = async (req, res, next) => {
 
     // If an avatar image file was uploaded
     if (req.file) {
-      const uploadResult = await uploadBuffer(req.file.buffer, "vinoff_avatars");
+      const uploadResult = await uploadBuffer(
+        req.file.buffer,
+        "vinoff_avatars",
+      );
       user.profile.avatar = {
         url: uploadResult.url,
         publicId: uploadResult.publicId,
