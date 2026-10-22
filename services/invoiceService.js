@@ -60,6 +60,10 @@ export const createInvoiceForOrder = async (order) => {
       unitPrice: item.price || item.unitPrice || item.wholesalePrice,
       total: item.subtotal,
       product: item.product,
+      isCarton: !isPiece,
+      unitType: isPiece ? "pieces" : "carton",
+      previousStock: item.previousStock ?? null,
+      newStock: item.newStock ?? null,
     };
   });
 

@@ -26,6 +26,22 @@ const invoiceItemSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Product",
     },
+    isCarton: {
+      type: Boolean,
+      default: true,
+    },
+    unitType: {
+      type: String,
+      default: "cartons",
+    },
+    previousStock: {
+      type: Number,
+      default: null,
+    },
+    newStock: {
+      type: Number,
+      default: null,
+    },
   },
   { _id: false }
 );

@@ -187,11 +187,16 @@ export const createOrder = async ({
     const inventoryField = isCarton ? "stock" : "unitStock";
     const inventoryKey = `${product._id}:${inventoryField}`;
     const existingRequirement = inventoryRequirements.get(inventoryKey);
+    const startingStock = Number(product?.[inventoryField] ?? 0);
+    const prevAccumulated = existingRequirement?.quantity || 0;
+    const itemPreviousStock = Math.max(0, startingStock - prevAccumulated);
+    const itemNewStock = Math.max(0, itemPreviousStock - quantity);
+
     inventoryRequirements.set(inventoryKey, {
       productId: product._id.toString(),
       field: inventoryField,
       label: isCarton ? "carton" : "loose-unit",
-      quantity: (existingRequirement?.quantity || 0) + quantity,
+      quantity: prevAccumulated + quantity,
     });
 
     processedItems.push({
@@ -205,6 +210,8 @@ export const createOrder = async ({
       isCarton,
       unitType,
       image: product.images?.[0]?.url || "",
+      previousStock: itemPreviousStock,
+      newStock: itemNewStock,
     });
   }
 
@@ -276,7 +283,23 @@ export const createOrder = async ({
     targetType: "Order",
     targetId: order._id,
     description: `Customer placed ${useVipCredit ? "VIP credit " : ""}order #${orderNumber}`,
-    metadata: { orderNumber, totalAmount, itemsCount: processedItems.length, isCreditOrder: useVipCredit },
+    metadata: {
+      orderNumber,
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      totalAmount,
+      itemsCount: processedItems.length,
+      isCreditOrder: useVipCredit,
+      stockMovements: processedItems.map((it) => ({
+        productId: it.product,
+        productName: it.name,
+        quantity: it.quantity,
+        change: -it.quantity,
+        unitType: it.isCarton ? "cartons" : "units",
+        previousStock: it.previousStock,
+        newStock: it.newStock,
+      })),
+    },
   });
 
   // Instant Email Ping to Store Owner and Admins (non-blocking async background)

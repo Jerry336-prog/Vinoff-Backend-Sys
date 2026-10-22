@@ -64,15 +64,49 @@ export const getInvoices = async (req, res, next) => {
 };
 
 /**
- * Get invoice by ID
+ * Get invoice by ID (also resolves Order ID, invoiceNumber, or orderNumber)
  * GET /api/invoices/:id
  */
 export const getInvoiceById = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findById(req.params.id)
-      .populate("customer", "firstName lastName email phone profile isVipCreditPartner outstandingCredit")
-      .populate("order", "orderNumber status paymentStatus isCreditOrder paymentMethod items")
-      .populate("createdBy", "firstName lastName email role profile");
+    const rawId = String(req.params.id || "").trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(rawId);
+
+    const populateInvoice = (query) =>
+      query
+        .populate("customer", "firstName lastName email phone profile isVipCreditPartner outstandingCredit")
+        .populate("order", "orderNumber status paymentStatus isCreditOrder paymentMethod items")
+        .populate("createdBy", "firstName lastName email role profile");
+
+    let invoice = null;
+
+    if (isObjectId) {
+      invoice = await populateInvoice(Invoice.findById(rawId));
+      if (!invoice) {
+        invoice = await populateInvoice(Invoice.findOne({ order: rawId }));
+      }
+    }
+
+    if (!invoice) {
+      invoice = await populateInvoice(Invoice.findOne({ invoiceNumber: rawId }));
+    }
+
+    // Fallback: check if rawId matches an Order (_id or orderNumber) and resolve/create its invoice
+    if (!invoice) {
+      const Order = (await import("../models/Order.js")).default;
+      const order = isObjectId
+        ? await Order.findById(rawId)
+        : await Order.findOne({ orderNumber: rawId });
+
+      if (order) {
+        invoice = await populateInvoice(Invoice.findOne({ order: order._id }));
+        if (!invoice) {
+          const { createInvoiceForOrder } = await import("../services/invoiceService.js");
+          const created = await createInvoiceForOrder(order);
+          invoice = await populateInvoice(Invoice.findById(created._id));
+        }
+      }
+    }
 
     if (!invoice) {
       return errorResponse(res, 404, "Invoice not found");

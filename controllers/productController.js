@@ -219,15 +219,37 @@ export const updateProduct = async (req, res, next) => {
       updateFields.allowPieces = updateFields.allowPieces === true || updateFields.allowPieces === "true";
     }
 
+    const prevStock = Number(product.stock ?? 0);
+    const prevUnitStock = Number(product.unitStock ?? 0);
+
     Object.assign(product, updateFields);
     await product.save({ validateModifiedOnly: true });
 
+    const newStock = Number(product.stock ?? 0);
+    const newUnitStock = Number(product.unitStock ?? 0);
+    const stockDelta = newStock - prevStock;
+    const unitStockDelta = newUnitStock - prevUnitStock;
+
     await logActivity({
       actorId: req.user._id,
-      action: "Admin updated product",
+      action:
+        stockDelta !== 0 || unitStockDelta !== 0
+          ? "Admin updated product stock"
+          : "Admin updated product",
       targetType: "Product",
       targetId: product._id,
       description: `Admin updated product '${product.name}'`,
+      metadata: {
+        productId: product._id,
+        productName: product.name,
+        category: product.category,
+        previousStock: prevStock,
+        newStock,
+        stockDelta,
+        previousUnitStock: prevUnitStock,
+        newUnitStock,
+        unitStockDelta,
+      },
     });
 
     return successResponse(res, 200, "Product updated successfully", product);

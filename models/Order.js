@@ -44,6 +44,14 @@ const orderItemSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    previousStock: {
+      type: Number,
+      default: null,
+    },
+    newStock: {
+      type: Number,
+      default: null,
+    },
   },
   { _id: false }
 );
