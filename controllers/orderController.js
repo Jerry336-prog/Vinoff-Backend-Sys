@@ -142,8 +142,7 @@ export const updateOrderStatus = async (req, res, next) => {
 
     // If changing to Payment Confirmed, invoke payment confirmation
     if (status === "Payment Confirmed") {
-      const order = await confirmPaymentService(req.params.id, req.user._id);
-      return successResponse(res, 200, "Payment confirmed successfully", order);
+      return errorResponse(res, 400, 'Payments must be verified through Paystack.');
     }
 
     const order = await updateOrderStatusService(req.params.id, status, req.user._id);

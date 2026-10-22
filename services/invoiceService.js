@@ -113,6 +113,7 @@ export const createCustomInvoice = async ({
   createdBy,
 }) => {
   const effectiveIsCredit = Boolean(isCredit || status === "On Credit");
+  if (status === 'Paid') throw new Error('Paid status is assigned automatically after Paystack verification.');
   const effectiveStatus = effectiveIsCredit && status === "Pending" ? "On Credit" : status;
 
   if (!INVOICE_STATUSES.includes(effectiveStatus)) {
@@ -251,6 +252,8 @@ export const updateInvoiceStatus = async (invoiceId, newStatus, actorId) => {
   }
 
   const previousStatus = invoice.status;
+  if (newStatus === 'Paid' && previousStatus !== 'Paid') throw new Error('Paid status is assigned automatically after Paystack verification.');
+  if (previousStatus === 'Paid' && newStatus !== 'Paid') throw new Error('A verified paid invoice cannot be changed to unpaid.');
   invoice.status = newStatus;
 
   if (newStatus === "On Credit") {

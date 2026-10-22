@@ -18,6 +18,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import announcementRoutes from "./routes/announcementRoutes.js";
 import settingRoutes from "./routes/settingRoutes.js";
 import analyticsRoutes from "./routes/analyticsRoutes.js";
+import paymentRoutes, { paystackWebhook } from './routes/paymentRoutes.js';
 
 // Middleware
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
@@ -54,9 +55,11 @@ app.use(
 );
 
 // Body parsers & cookies
+app.post('/api/payments/webhook', express.raw({ type: 'application/json', limit: '1mb' }), paystackWebhook);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(cookieParser());
+app.use('/api/payments', paymentRoutes);
 
 // Health Check Endpoint
 app.get("/api/health", (req, res) => {

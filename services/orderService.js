@@ -224,7 +224,7 @@ export const createOrder = async ({
       status: useVipCredit ? "Processing" : "Pending Payment",
       paymentStatus: useVipCredit ? "On Credit" : "Pending",
       isCreditOrder: useVipCredit,
-      paymentMethod: useVipCredit ? "credit" : paymentMethod || "bank_transfer",
+      paymentMethod: useVipCredit ? "credit" : "paystack",
       notes,
     });
   } catch (error) {

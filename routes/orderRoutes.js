@@ -16,12 +16,11 @@ router.post(
   "/:id/payment",
   protect,
   idempotency,
-  upload.single("screenshot"),
-  orderController.uploadPayment
+  (req, res) => res.status(410).json({ message: 'Screenshot payments have been replaced by Paystack. Open your order to pay securely.' })
 );
 
 // Order status updates (Admin)
 router.patch("/:id/status", protect, adminOrSubAdmin, idempotency, orderController.updateOrderStatus);
-router.post("/:id/confirm-payment", protect, adminOrSubAdmin, idempotency, orderController.confirmOrderPayment);
+router.post("/:id/confirm-payment", protect, adminOrSubAdmin, (req, res) => res.status(410).json({ message: 'Payments are now verified automatically by Paystack.' }));
 
 export default router;

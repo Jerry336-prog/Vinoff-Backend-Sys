@@ -12,6 +12,7 @@ dist
 dist-ssr
 *.local
 .env
+PAYSTACK_SETUP.md
 
 # Editor directories and files
 .vscode/*
