@@ -65,6 +65,7 @@ export const ORDER_STATUSES = [
   "Ready for Delivery",
   "Shipped",
   "Completed",
+  "Delivered",
   "Cancelled",
 ];
 

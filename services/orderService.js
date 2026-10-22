@@ -447,6 +447,9 @@ export const confirmPayment = async (orderId, adminId) => {
  * Update order status
  */
 export const updateOrderStatus = async (orderId, newStatus, adminId) => {
+  if (!['Processing', 'Delivered', 'Cancelled'].includes(newStatus)) {
+    throw new Error('Choose Processing, Delivered, or Cancelled. Payment is confirmed automatically.');
+  }
   if (!ORDER_STATUSES.includes(newStatus)) {
     throw new Error(
       `Invalid order status: '${newStatus}'. Allowed statuses: ${ORDER_STATUSES.join(", ")}`
@@ -459,6 +462,12 @@ export const updateOrderStatus = async (orderId, newStatus, adminId) => {
   }
 
   const prevStatus = order.status;
+  if (newStatus !== 'Cancelled' && order.paymentStatus !== 'Confirmed' && !order.isCreditOrder) {
+    throw new Error('Payment must be verified before processing or delivery.');
+  }
+  if (['Delivered', 'Completed'].includes(prevStatus) && newStatus !== 'Delivered') {
+    throw new Error('A delivered order cannot move backwards.');
+  }
   order.status = newStatus;
   await order.save();
 

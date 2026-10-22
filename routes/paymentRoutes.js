@@ -43,7 +43,7 @@ export const settlePayment = async (reference) => {
     if (!claimed) return;
     if (payment.order) {
       await Order.updateOne({ _id: payment.order }, { $set: { paymentStatus: 'Confirmed', paymentMethod: 'paystack' } }, { session });
-      await Order.updateOne({ _id: payment.order, status: { $in: ['Pending Payment', 'Awaiting Confirmation'] } }, { $set: { status: 'Payment Confirmed' } }, { session });
+      await Order.updateOne({ _id: payment.order, status: { $in: ['Pending Payment', 'Awaiting Confirmation'] } }, { $set: { status: 'Processing' } }, { session });
     }
     if (payment.invoice) await Invoice.updateOne({ _id: payment.invoice }, { $set: { status: 'Paid', creditSettledAt: new Date() } }, { session });
   });
