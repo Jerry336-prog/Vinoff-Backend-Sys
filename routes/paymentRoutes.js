@@ -74,11 +74,12 @@ router.post('/initialize', protect, async (req, res, next) => {
     const amount = Math.round(Number(invoice?.total ?? order.totalAmount) * 100);
     if (!Number.isSafeInteger(amount) || amount <= 0) throw new Error('Invalid payment amount');
     const existing = await Payment.findOne({ customer: req.user._id, ...(invoice ? { invoice: invoice._id } : { order: order._id }), amount, status: 'pending', authorizationUrl: { $exists: true }, createdAt: { $gte: new Date(Date.now() - 30 * 60 * 1000) } }).sort({ createdAt: -1 });
-    if (existing) return res.json({ success: true, data: { reference: existing.reference, authorization_url: existing.authorizationUrl } });
+    if (existing?.accessCode) return res.json({ success: true, data: { reference: existing.reference, authorization_url: existing.authorizationUrl, access_code: existing.accessCode } });
     const payment = await Payment.create({ reference: `vinoff-${crypto.randomUUID()}`, customer: req.user._id, order: order?._id || invoice?.order, invoice: invoice?._id, amount });
-    const clientUrl = process.env.PAYSTACK_CALLBACK_URL || `${process.env.CLIENT_URL}/payments/return`;
+    const clientUrl = process.env.PAYSTACK_CALLBACK_URL || `${String(process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '')}/payments/return`;
     const data = await requestPaystack('/transaction/initialize', { email: req.user.email, amount, currency: 'NGN', reference: payment.reference, callback_url: clientUrl });
     payment.authorizationUrl = data.authorization_url;
+    payment.accessCode = data.access_code;
     await payment.save();
     return res.json({ success: true, data });
   } catch (error) { next(error); }

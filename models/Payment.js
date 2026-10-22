@@ -9,6 +9,7 @@ const schema = new mongoose.Schema({
   currency: { type: String, default: 'NGN' },
   status: { type: String, default: 'pending' },
   authorizationUrl: String,
+  accessCode: String,
   paidAt: Date,
 }, { timestamps: true });
 export default mongoose.model('Payment', schema);
