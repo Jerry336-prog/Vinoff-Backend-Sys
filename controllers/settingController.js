@@ -470,13 +470,14 @@ export const DEFAULT_STORE_LOCATION = {
   googleMapsUrl: "https://maps.google.com/?q=Trade+Fair+Complex+Badagry+Expressway+Lagos",
   walkthroughVideoUrl: "/store/VINOFF_CO_walkthrough.MP4",
   footerNote:
-    "Wire payments transfer slips proof must be submitted in support chats to begin packing and logistics.",
+    "Pay securely with Paystack from checkout, your order, or your invoice. Payment confirmation is automatic; no receipt upload is required.",
 };
 
 export const getStoreLocation = async (req, res, next) => {
   try {
     const setting = await Setting.findOne({ key: "store_location" });
     const storeLocation = setting ? { ...DEFAULT_STORE_LOCATION, ...setting.value } : { ...DEFAULT_STORE_LOCATION };
+    if (/wire payments transfer slips|upload.{0,45}(payment|receipt|proof|screenshot)/i.test(storeLocation.footerNote || '')) storeLocation.footerNote = DEFAULT_STORE_LOCATION.footerNote;
 
     // Normalize legacy typo video URL if present
     if (

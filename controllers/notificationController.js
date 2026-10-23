@@ -1,4 +1,5 @@
-import Notification from "../models/Notification.js";
+import Notification, { NOTIFICATION_TYPES } from "../models/Notification.js";
+import { isStaff, hasPermission, notificationPermission } from '../utils/staffPermissions.js';
 import { getPagination, formatPaginatedResponse } from "../utils/pagination.js";
 import { successResponse, errorResponse } from "../utils/response.js";
 
@@ -9,17 +10,19 @@ import { successResponse, errorResponse } from "../utils/response.js";
 export const getNotifications = async (req, res, next) => {
   try {
     const { page, limit, skip } = getPagination(req, 20);
+    const query = { recipient: req.user._id };
+    if (isStaff(req.user)) query.type = { $in: NOTIFICATION_TYPES.filter(type => !notificationPermission(type) || hasPermission(req.user, notificationPermission(type))) };
 
     const [notifications, totalCount, unreadCount] = await Promise.all([
-      Notification.find({ recipient: req.user._id })
+      Notification.find(query)
         .populate("relatedUser", "firstName lastName email")
         .populate("relatedOrder", "orderNumber status totalAmount")
         .populate("relatedInvoice", "invoiceNumber status total")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit),
-      Notification.countDocuments({ recipient: req.user._id }),
-      Notification.countDocuments({ recipient: req.user._id, read: false }),
+      Notification.countDocuments(query),
+      Notification.countDocuments({ ...query, read: false }),
     ]);
 
     const result = formatPaginatedResponse(notifications, totalCount, page, limit);

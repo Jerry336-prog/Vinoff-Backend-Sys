@@ -1,8 +1,8 @@
 import Invoice, { INVOICE_STATUSES } from "../models/Invoice.js";
 import {
   createCustomInvoice as createCustomInvoiceService,
-  updateInvoiceStatus as updateInvoiceStatusService,
-  recalculateCustomerCredit,
+  updateInvoiceDetails,
+  deleteInvoiceRecord,
 } from "../services/invoiceService.js";
 import { getPagination, formatPaginatedResponse } from "../utils/pagination.js";
 import { successResponse, errorResponse } from "../utils/response.js";
@@ -99,6 +99,7 @@ export const getInvoiceById = async (req, res, next) => {
         : await Order.findOne({ orderNumber: rawId });
 
       if (order) {
+        if (req.user.role === 'customer' && String(order.customer) !== String(req.user._id)) return errorResponse(res, 403, 'Access denied.');
         invoice = await populateInvoice(Invoice.findOne({ order: order._id }));
         if (!invoice) {
           const { createInvoiceForOrder } = await import("../services/invoiceService.js");
@@ -160,55 +161,7 @@ export const createCustomInvoice = async (req, res, next) => {
  */
 export const updateInvoice = async (req, res, next) => {
   try {
-    const { status, notes, dueDate, issuedBy, items, discount, deliveryFee, isCredit } = req.body;
-
-    if (status && !INVOICE_STATUSES.includes(status)) {
-      return errorResponse(
-        res,
-        400,
-        `Invalid status '${status}'. Allowed statuses are strictly: ${INVOICE_STATUSES.join(", ")}`
-      );
-    }
-
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) {
-      return errorResponse(res, 404, "Invoice not found");
-    }
-
-    if (notes !== undefined) invoice.notes = notes;
-    if (dueDate !== undefined) invoice.dueDate = dueDate ? new Date(dueDate) : null;
-    if (issuedBy !== undefined) invoice.issuedBy = issuedBy;
-    if (isCredit !== undefined) invoice.isCredit = Boolean(isCredit);
-
-    if (items !== undefined && Array.isArray(items) && items.length > 0) {
-      invoice.items = items;
-      const newSubtotal = items.reduce(
-        (sum, item) => sum + (Number(item.total) || Number(item.quantity || 1) * Number(item.unitPrice || 0)),
-        0
-      );
-      invoice.subtotal = newSubtotal;
-    }
-    if (discount !== undefined) invoice.discount = Number(discount) || 0;
-    if (deliveryFee !== undefined) invoice.deliveryFee = Number(deliveryFee) || 0;
-
-    if (items !== undefined || discount !== undefined || deliveryFee !== undefined) {
-      invoice.total = Math.max(
-        0,
-        Number(invoice.subtotal || 0) - Number(invoice.discount || 0) + Number(invoice.deliveryFee || 0)
-      );
-    }
-
-    if (req.user && !invoice.createdBy) {
-      invoice.createdBy = req.user._id;
-    }
-
-    await invoice.save();
-
-    if (status) {
-      await updateInvoiceStatusService(invoice._id, status, req.user._id);
-    } else {
-      await recalculateCustomerCredit(invoice.customer);
-    }
+    const invoice = await updateInvoiceDetails(req.params.id, req.body, req.user._id);
 
     const updatedInvoice = await Invoice.findById(invoice._id)
       .populate("customer", "firstName lastName email phone profile isVipCreditPartner outstandingCredit")
@@ -227,14 +180,7 @@ export const updateInvoice = async (req, res, next) => {
  */
 export const deleteInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findById(req.params.id);
-    if (!invoice) {
-      return errorResponse(res, 404, "Invoice not found");
-    }
-
-    const customerId = invoice.customer;
-    await Invoice.findByIdAndDelete(req.params.id);
-    await recalculateCustomerCredit(customerId);
+    const invoice = await deleteInvoiceRecord(req.params.id);
 
     await logActivity({
       actorId: req.user._id,
@@ -269,7 +215,18 @@ export const getInvoiceDownloadData = async (req, res, next) => {
       return errorResponse(res, 403, "Access denied");
     }
 
+    // Creating, editing or paying an invoice is not the same as stamping it.
+    if (req.user.role === 'customer' && !String(invoice.issuedBy || '').trim()) {
+      return errorResponse(
+        res,
+        403,
+        'This invoice cannot be downloaded yet because it has not been stamped by an admin. Please contact the store to request a stamp, then try downloading again.',
+        { code: 'INVOICE_NOT_STAMPED' },
+      );
+    }
+
     const downloadPayload = {
+      _id: invoice._id,
       platform: "Vinoff Wholesale E-Commerce",
       invoiceNumber: invoice.invoiceNumber,
       date: invoice.createdAt,
@@ -284,11 +241,7 @@ export const getInvoiceDownloadData = async (req, res, next) => {
         city: invoice.customer.profile?.city || "",
         state: invoice.customer.profile?.state || "",
       },
-      issuedBy:
-        invoice.issuedBy ||
-        (invoice.createdBy
-          ? `${invoice.createdBy.firstName || ""} ${invoice.createdBy.lastName || ""}`.trim() || invoice.createdBy.name
-          : null),
+      issuedBy: String(invoice.issuedBy || '').trim() || null,
       createdBy: invoice.createdBy
         ? {
             firstName: invoice.createdBy.firstName,

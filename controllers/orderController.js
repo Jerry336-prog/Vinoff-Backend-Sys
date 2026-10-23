@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import Order from "../models/Order.js";
+import Product from '../models/Product.js';
+import { prepareReorder } from '../services/reorderService.js';
 import {
   createOrder as createOrderService,
   submitPaymentScreenshot,
@@ -28,6 +30,15 @@ export const createOrder = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+export const getReorderPreview = async (req, res, next) => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, customer: req.user._id });
+    if (!order) return errorResponse(res, 404, 'Order not found. You can only reorder your own purchases.');
+    const products = await Product.find({ _id: { $in: order.items.map(item => item.product).filter(Boolean) } });
+    return successResponse(res, 200, 'Order ready to review', prepareReorder(order, products));
+  } catch (error) { next(error); }
 };
 
 /**

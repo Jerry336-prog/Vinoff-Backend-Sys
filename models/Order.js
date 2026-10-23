@@ -136,7 +136,7 @@ const orderSchema = new mongoose.Schema(
     paymentMethod: {
       type: String,
       enum: ["bank_transfer", "credit", "paystack"],
-      default: "bank_transfer",
+      default: "paystack",
     },
     paymentScreenshot: {
       type: paymentScreenshotSchema,

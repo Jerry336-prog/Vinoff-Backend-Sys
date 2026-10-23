@@ -15,6 +15,10 @@ export const NOTIFICATION_TYPES = [
   "ANNOUNCEMENT_POSTED",
   "EXPENSE_LOGGED",
   "VIP_CREDIT_UPDATED",
+  "CREDIT_LIMIT_REQUESTED",
+  "CREDIT_LIMIT_REVIEWED",
+  "STAFF_PERMISSIONS_UPDATED",
+  "PAYMENT_CONFIRMED",
 ];
 
 const notificationSchema = new mongoose.Schema(
@@ -57,6 +61,7 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Chat",
     },
+    relatedApproval: { type: mongoose.Schema.Types.ObjectId, ref: 'CreditLimitRequest' },
     read: {
       type: Boolean,
       default: false,

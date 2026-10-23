@@ -9,7 +9,8 @@ import expenseController from "../controllers/expenseController.js";
 import announcementController from "../controllers/announcementController.js";
 import analyticsController from "../controllers/analyticsController.js";
 import { protect } from "../middleware/authMiddleware.js";
-import { adminOrSubAdmin } from "../middleware/adminMiddleware.js";
+import { adminOrSubAdmin, superAdminOnly } from "../middleware/adminMiddleware.js";
+import { getStaff, setStaffPermissions, getCreditRequests, requestCreditLimit, reviewCreditRequest } from '../controllers/accessControlController.js';
 import { idempotency } from "../middleware/idempotencyMiddleware.js";
 import { upload } from "../middleware/uploadMiddleware.js";
 
@@ -17,6 +18,12 @@ const router = express.Router();
 
 // Apply auth and admin checks across all admin routes
 router.use(protect, adminOrSubAdmin, idempotency);
+
+router.get('/staff', superAdminOnly, getStaff);
+router.patch('/staff/:id/permissions', superAdminOnly, setStaffPermissions);
+router.get('/credit-requests', getCreditRequests);
+router.post('/credit-requests/:id/review', superAdminOnly, reviewCreditRequest);
+router.post('/customers/:id/credit-limit', requestCreditLimit);
 
 // Dashboard
 router.get("/dashboard", adminController.getDashboardStats);

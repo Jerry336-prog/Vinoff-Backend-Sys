@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import { ENV } from "../config/env.js";
 import { errorResponse } from "../utils/response.js";
+import { isStaff, hasPermission, requiredPermissions } from '../utils/staffPermissions.js';
 
 /**
  * Protect routes - verifies JWT from Bearer header or cookies
@@ -46,6 +47,10 @@ export const protect = async (req, res, next) => {
 
     req.user = user;
     req.sessionId = decoded.sessionId || null;
+
+    if (isStaff(user) && requiredPermissions(req.method, req.originalUrl, req.body).some(permission => !hasPermission(user, permission))) {
+      return errorResponse(res, 403, 'Your staff account does not have permission for this action. Contact the super admin.');
+    }
 
     // Background update lastActive (throttled to at most once per 5 minutes per session)
     if (decoded.sessionId && Array.isArray(user.sessions)) {

@@ -24,6 +24,9 @@ import paymentRoutes, { paystackWebhook } from './routes/paymentRoutes.js';
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
 const app = express();
+// Render terminates requests at its reverse proxy. Trust only the configured hops.
+const proxyHops = Number(process.env.TRUST_PROXY_HOPS || (process.env.RENDER ? 1 : 0));
+app.set('trust proxy', Number.isInteger(proxyHops) && proxyHops >= 0 ? proxyHops : 0);
 
 // Security headers
 app.use(

@@ -241,7 +241,9 @@ export const getCustomers = async (req, res, next) => {
  */
 export const getCustomerById = async (req, res, next) => {
   try {
-    const customer = await User.findById(req.params.id);
+    const customer = req.user.role === 'superadmin'
+      ? await User.findById(req.params.id)
+      : await User.findOne({ _id: req.params.id, role: 'customer' });
     if (!customer) {
       return errorResponse(res, 404, "User not found");
     }
@@ -298,7 +300,7 @@ export const updateCustomerStatus = async (req, res, next) => {
 export const updateCustomerVipCredit = async (req, res, next) => {
   try {
     const { isVipCreditPartner } = req.body;
-    const customer = await User.findById(req.params.id);
+    const customer = await User.findOne({ _id: req.params.id, role: 'customer' });
     if (!customer) {
       return errorResponse(res, 404, "Customer not found");
     }
@@ -309,6 +311,7 @@ export const updateCustomerVipCredit = async (req, res, next) => {
         : !customer.isVipCreditPartner;
 
     customer.isVipCreditPartner = nextVipState;
+    customer.creditLimitVersion = Number(customer.creditLimitVersion || 0) + 1;
     await customer.save();
 
     const liveCredit = await recalculateCustomerCredit(customer._id);
@@ -334,7 +337,7 @@ export const updateCustomerVipCredit = async (req, res, next) => {
       type: "VIP_CREDIT_UPDATED",
       title: nextVipState ? "VIP Credit Partner Unlocked" : "VIP Credit Partner Status Updated",
       message: nextVipState
-        ? "Congratulations! Your wholesale account has been upgraded to a VIP Credit Partner. You can now place orders on credit and track your credit invoices directly from your header."
+        ? "Your account is now a VIP Credit Partner. Credit orders require a super-admin-approved credit limit. Check your credit ledger or contact the store to review your available allowance."
         : "Your VIP Credit Partner privilege has been updated by an administrator.",
       relatedUser: customer._id,
     }).catch(() => {});
@@ -391,8 +394,8 @@ export const getUsers = async (req, res, next) => {
     const { page, limit, skip } = getPagination(req, 100);
     const { search, role, status } = req.query;
 
-    const query = {};
-    if (role) query.role = role;
+    const query = req.user.role === 'superadmin' ? {} : { role: 'customer' };
+    if (role && req.user.role === 'superadmin') query.role = role;
     if (status) query.accountStatus = status;
 
     if (search && search.trim()) {
@@ -440,7 +443,9 @@ export const updateUserRole = async (req, res, next) => {
     }
 
     const prevRole = targetUser.role;
+    if (targetUser.role === 'superadmin' || role === 'superadmin') return errorResponse(res, 403, 'Super admin accounts cannot be changed through staff promotion.');
     targetUser.role = role;
+    targetUser.staffPermissions = [];
     await targetUser.save();
 
     await ActivityLog.create({

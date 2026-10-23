@@ -1,5 +1,6 @@
 import express from "express";
 import orderController from "../controllers/orderController.js";
+import { getReorderPreview } from '../controllers/orderController.js';
 import { protect } from "../middleware/authMiddleware.js";
 import { adminOrSubAdmin } from "../middleware/adminMiddleware.js";
 import { upload } from "../middleware/uploadMiddleware.js";
@@ -11,6 +12,7 @@ const router = express.Router();
 
 router.post("/", protect, idempotency, validate(validateCreateOrder), orderController.createOrder);
 router.get("/", protect, orderController.getOrders);
+router.get('/:id/reorder-preview', protect, getReorderPreview);
 router.get("/:id", protect, orderController.getOrderById);
 router.post(
   "/:id/payment",

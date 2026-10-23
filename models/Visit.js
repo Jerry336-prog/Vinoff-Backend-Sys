@@ -125,6 +125,7 @@ visitSchema.index({ lastSeenAt: -1 });
 visitSchema.index({ visitorId: 1, createdAt: -1 });
 visitSchema.index({ sessionId: 1, createdAt: -1 });
 visitSchema.index({ source: 1, createdAt: -1 });
+visitSchema.index({ ip: 1, lastSeenAt: -1 });
 
 export const Visit = mongoose.model("Visit", visitSchema);
 export default Visit;

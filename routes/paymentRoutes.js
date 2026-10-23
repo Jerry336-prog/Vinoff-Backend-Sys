@@ -6,6 +6,7 @@ import Order from '../models/Order.js';
 import Invoice from '../models/Invoice.js';
 import { protect } from '../middleware/authMiddleware.js';
 import { recalculateCustomerCredit } from '../services/invoiceService.js';
+import { withCreditTransaction } from '../services/creditControlService.js';
 import rateLimit from 'express-rate-limit';
 
 const router = express.Router();
@@ -32,13 +33,13 @@ export const settlePayment = async (reference) => {
     throw new Error('Payment amount or currency does not match');
   }
   // Commit payment, invoice and order together. Webhook retries cannot settle twice.
-  await mongoose.connection.transaction(async (session) => {
+  await withCreditTransaction(payment.customer, async (session) => {
     const currentInvoice = payment.invoice ? await Invoice.findById(payment.invoice).session(session) : null;
     if (currentInvoice && Math.round(Number(currentInvoice.total) * 100) !== payment.amount) throw new Error('Invoice changed after payment began. Please contact support for reconciliation.');
     const claimed = await Payment.findOneAndUpdate(
       { _id: payment._id, status: { $ne: 'success' } },
       { $set: { status: 'success', paidAt: transaction.paid_at || new Date() } },
-      { session, new: true },
+      { session, returnDocument: 'after' },
     );
     if (!claimed) return;
     if (payment.order) {
@@ -46,8 +47,7 @@ export const settlePayment = async (reference) => {
       await Order.updateOne({ _id: payment.order, status: { $in: ['Pending Payment', 'Awaiting Confirmation'] } }, { $set: { status: 'Processing' } }, { session });
     }
     if (payment.invoice) await Invoice.updateOne({ _id: payment.invoice }, { $set: { status: 'Paid', creditSettledAt: new Date() } }, { session });
-  });
-  await recalculateCustomerCredit(payment.customer);
+  }, { enforce: false });
   return { status: 'success', reference, orderId: payment.order, invoiceId: payment.invoice };
 };
 

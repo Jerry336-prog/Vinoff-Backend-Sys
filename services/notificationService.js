@@ -1,6 +1,7 @@
 import Notification from "../models/Notification.js";
 import ActivityLog from "../models/ActivityLog.js";
 import User from "../models/User.js";
+import { hasPermission, notificationPermission } from '../utils/staffPermissions.js';
 
 /**
  * Send notification to all admin and subAdmin users
@@ -15,7 +16,9 @@ export const notifyAdmins = async ({
   relatedChat = null,
 }) => {
   try {
-    const admins = await User.find({ role: { $in: ["admin", "subAdmin"] } }).select("_id");
+    const candidates = await User.find({ role: { $in: ["admin", "subAdmin", "superadmin"] }, accountStatus: { $ne: 'suspended' } }).select('_id role staffPermissions');
+    const permission = notificationPermission(type);
+    const admins = candidates.filter(user => !permission || hasPermission(user, permission));
     if (!admins.length) return [];
 
     const notifications = admins.map((admin) => ({

@@ -10,8 +10,10 @@ import { createInvoiceForOrder, recalculateCustomerCredit } from "./invoiceServi
 import { notifyAdmins, notifyUser, logActivity } from "./notificationService.js";
 import { sendOrderAlertEmail } from "./emailService.js";
 import { uploadBuffer } from "./cloudinaryService.js";
+import { withCreditTransaction } from './creditControlService.js';
+import { creditError } from '../utils/creditPolicy.js';
 
-const reserveInventory = async (requirements, productMap) => {
+const reserveInventory = async (requirements, productMap, session) => {
   const appliedAdjustments = [];
 
   try {
@@ -22,9 +24,9 @@ const reserveInventory = async (requirements, productMap) => {
       const label = requirement.field === "carton" || requirement.field === "stock" ? "carton" : "loose-unit";
 
       if (available < requirement.quantity) {
-        throw new Error(
+        throw creditError(
           `Insufficient ${label} stock for '${product?.name || "product"}'. ` +
-            `Available: ${available}, requested: ${requirement.quantity}.`
+            `Available: ${available}, requested: ${requirement.quantity}.`, 409
         );
       }
     }
@@ -34,14 +36,14 @@ const reserveInventory = async (requirements, productMap) => {
       const product = productMap.get(requirement.productId);
 
       const updatedProduct = await Product.findOneAndUpdate(
-        { _id: requirement.productId },
+        { _id: requirement.productId, status: 'active', [requirement.field]: { $gte: requirement.quantity } },
         { $inc: { [requirement.field]: -requirement.quantity } },
-        { new: true }
+        { returnDocument: 'after', session }
       );
 
       if (!updatedProduct) {
-        throw new Error(
-          `Product '${product?.name || "product"}' not found during stock deduction.`
+        throw creditError(
+          `Product '${product?.name || "product"}' is unavailable or no longer has sufficient stock.`, 409
         );
       }
 
@@ -49,7 +51,7 @@ const reserveInventory = async (requirements, productMap) => {
     }
   } catch (error) {
     // Rollback all already-applied deductions
-    await Promise.all(
+    if (!session) await Promise.all(
       appliedAdjustments.map((adj) =>
         Product.updateOne(
           { _id: adj.productId },
@@ -60,7 +62,11 @@ const reserveInventory = async (requirements, productMap) => {
     throw error;
   }
 
-  // Check low-stock alert thresholds
+  return appliedAdjustments;
+};
+
+const checkLowStock = async requirements => {
+  // Check thresholds only after inventory and order commit successfully.
   try {
     const notificationSetting = await Setting.findOne({ key: "notification_preferences" });
     const prefs = notificationSetting?.value || {};
@@ -91,7 +97,6 @@ const reserveInventory = async (requirements, productMap) => {
     console.error("[Low Stock Alert Check Error]:", err.message);
   }
 
-  return appliedAdjustments;
 };
 
 const restoreInventory = async (adjustments) => {
@@ -114,7 +119,7 @@ export const createOrder = async ({
   deliveryFee = 0,
   notes = "",
   isCreditOrder = false,
-  paymentMethod = "bank_transfer",
+  paymentMethod = "paystack",
 }) => {
   // Check store status / vacation mode
   const storeStatusSetting = await Setting.findOne({ key: "store_status" });
@@ -161,14 +166,15 @@ export const createOrder = async ({
       throw new Error(`Product '${product.name}' is currently unavailable`);
     }
 
-    const quantity = parseInt(item.quantity, 10);
-    if (!quantity || quantity < 1) {
+    const quantity = Number(item.quantity);
+    if (!Number.isSafeInteger(quantity) || quantity < 1) {
       throw new Error(
         `Quantity for '${product.name}' must be at least 1`
       );
     }
 
     const isCarton = item.isCarton !== false && item.unitType !== "pieces" && item.unitType !== "units";
+    if ((isCarton && product.allowCarton === false) || (!isCarton && product.allowPieces === false)) throw creditError(`This purchase format is not available for ${product.name}.`, 409);
     const cartonPrice = Number(product.wholesalePrice || product.price || 0);
     const unitsPerCarton = Number(product.unitsPerCarton || product.minimumQuantity || 12);
     const piecePrice = Number(product.piecePrice || product.unitPrice || Math.round(cartonPrice / unitsPerCarton));
@@ -215,13 +221,13 @@ export const createOrder = async ({
     });
   }
 
-  const inventoryAdjustments = await reserveInventory(inventoryRequirements, productMap);
   const orderNumber = generateOrderNumber();
-  const totalAmount = subtotal + Number(deliveryFee);
-  let order;
-
-  try {
-    order = await Order.create({
+  if (!Number.isFinite(Number(deliveryFee)) || Number(deliveryFee) < 0) throw creditError('Invalid delivery fee.');
+  const totalAmount = Math.round((subtotal + Number(deliveryFee)) * 100) / 100;
+  if (!Number.isSafeInteger(Math.round(totalAmount * 100))) throw creditError('Invalid order total.');
+  const { order, invoice } = await withCreditTransaction(customerId, async session => {
+    await reserveInventory(inventoryRequirements, productMap, session);
+    const [order] = await Order.create([{
       orderNumber,
       customer: customerId,
       items: processedItems,
@@ -233,16 +239,13 @@ export const createOrder = async ({
       isCreditOrder: useVipCredit,
       paymentMethod: useVipCredit ? "credit" : "paystack",
       notes,
-    });
-  } catch (error) {
-    await restoreInventory(inventoryAdjustments);
-    throw error;
-  }
-
-  // Automatically create invoice
-  const invoice = await createInvoiceForOrder(order);
-  order.invoice = invoice._id;
-  await order.save();
+    }], { session });
+    const invoice = await createInvoiceForOrder(order, session);
+    order.invoice = invoice._id;
+    await order.save({ session });
+    return { order, invoice };
+  });
+  await checkLowStock(inventoryRequirements);
 
   // Create or link chat for customer support / order messaging ("Message Admin")
   const chatTitle = `${customer.firstName} ${customer.lastName} — Order #${orderNumber}`;
@@ -262,7 +265,7 @@ export const createOrder = async ({
     senderRole: "system",
     content: useVipCredit
       ? `VIP Credit Order #${orderNumber} placed on credit. Total credit amount: ₦${totalAmount.toLocaleString()} (Invoice #${invoice.invoiceNumber}).`
-      : `Order #${orderNumber} created. Total amount: ₦${totalAmount.toLocaleString()}. Please upload your payment screenshot to proceed.`,
+      : `Order #${orderNumber} created. Total amount: ₦${totalAmount.toLocaleString()}. Pay securely with Paystack from checkout or your order page. Payment is confirmed automatically.`,
   });
 
   // Notify Admins

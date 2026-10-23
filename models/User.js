@@ -54,6 +54,10 @@ const userSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    creditLimit: { type: Number, default: 0, min: 0 },
+    creditLimitVersion: { type: Number, default: 0 },
+    creditLedgerVersion: { type: Number, default: 0 },
+    staffPermissions: { type: [String], default: [] },
     profile: {
       companyName: { type: String, trim: true, default: "" },
       businessType: { type: String, trim: true, default: "" },

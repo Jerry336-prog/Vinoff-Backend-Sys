@@ -1,5 +1,6 @@
 import { Visit } from "../models/Visit.js";
 import { successResponse, errorResponse } from "../utils/response.js";
+import { normalizeVisitorIp, visitorIdentityStage } from '../utils/visitorIdentity.js';
 
 /**
  * Normalizes referrer or utm params into a clean source label
@@ -70,6 +71,8 @@ export const trackVisit = async (req, res) => {
 
     const currentPath = path || "/";
     const now = new Date();
+    const rawIp = normalizeVisitorIp(req.ip || req.socket?.remoteAddress);
+    const identityFilter = rawIp ? { ip: rawIp } : { visitorId };
 
     // 1. Check if an active session already exists for this visitor
     // Either matching exact sessionId OR active within the last 30 minutes for this visitorId
@@ -77,37 +80,25 @@ export const trackVisit = async (req, res) => {
     let activeSession = null;
 
     if (sessionId) {
-      activeSession = await Visit.findOne({ sessionId });
+      activeSession = await Visit.findOne({ sessionId, visitorId, ...identityFilter, lastSeenAt: { $gte: thirtyMinutesAgo } });
     }
 
     if (!activeSession) {
       activeSession = await Visit.findOne({
         visitorId,
+        ...identityFilter,
         lastSeenAt: { $gte: thirtyMinutesAgo },
       }).sort({ lastSeenAt: -1 });
     }
 
     // IF ACTIVE SESSION EXISTS: This is the SAME user navigating to another page!
     if (activeSession) {
-      activeSession.currentPage = currentPath;
-      activeSession.lastSeenAt = now;
-      activeSession.pageViewsCount = (activeSession.pageViewsCount || 1) + 1;
-
-      // Add to pagesVisited journey
-      if (!Array.isArray(activeSession.pagesVisited)) {
-        activeSession.pagesVisited = [{ path: activeSession.landingPage || "/", visitedAt: activeSession.createdAt }];
-      }
-
-      const lastPage = activeSession.pagesVisited[activeSession.pagesVisited.length - 1];
-      if (!lastPage || lastPage.path !== currentPath) {
-        activeSession.pagesVisited.push({ path: currentPath, visitedAt: now });
-      }
-
-      if (userId && !activeSession.userId) {
-        activeSession.userId = userId;
-      }
-
-      await activeSession.save();
+      // Atomic increments retain concurrent repeat visits from the same device.
+      const updatedSession = await Visit.findByIdAndUpdate(activeSession._id, {
+        $set: { currentPage: currentPath, lastSeenAt: now, ...(userId && !activeSession.userId ? { userId } : {}) },
+        $inc: { pageViewsCount: 1 },
+        $push: { pagesVisited: { path: currentPath, visitedAt: now } },
+      }, { new: true });
 
       return res.status(200).json({
         success: true,
@@ -115,7 +106,7 @@ export const trackVisit = async (req, res) => {
         data: {
           id: activeSession._id,
           visitorId: activeSession.visitorId,
-          pageViewsCount: activeSession.pageViewsCount,
+          pageViewsCount: updatedSession.pageViewsCount,
           isNewVisitor: false,
         },
       });
@@ -128,13 +119,8 @@ export const trackVisit = async (req, res) => {
       source = detectSource(referrer, utmSource);
     }
 
-    const rawIp =
-      req.headers["x-forwarded-for"]?.split(",")[0]?.trim() ||
-      req.socket.remoteAddress ||
-      "";
-
-    // Has this device ever entered the website before?
-    const previousVisit = await Visit.exists({ visitorId });
+    // Different browsers on the same public IP count as the same visitor.
+    const previousVisit = await Visit.exists(identityFilter);
     const isNewVisitor = !previousVisit;
 
     const newVisit = new Visit({
@@ -200,37 +186,38 @@ export const getAnalyticsSummary = async (req, res, next) => {
       startDate = new Date(2020, 0, 1);
     }
 
-    const matchFilter = { createdAt: { $gte: startDate, $lte: now } };
+    const requestedStart = req.query.startDate ? new Date(req.query.startDate) : startDate;
+    const requestedEnd = req.query.endDate ? new Date(req.query.endDate) : now;
+    if (!Number.isFinite(requestedStart.getTime()) || !Number.isFinite(requestedEnd.getTime()) || requestedStart > requestedEnd) {
+      return errorResponse(res, 400, "Choose a valid analytics date range.");
+    }
+    const matchFilter = { createdAt: { $gte: requestedStart, $lte: requestedEnd } };
 
     // 1. Total Pageviews, Unique Visitors, Total Sessions, and New Visitors
-    const [pageviewsAgg, uniqueVisitorIds, totalSessions, newVisitorIds] = await Promise.all([
-      // Sum all page views across sessions
+    const [visitorTotals, totalSessions] = await Promise.all([
       Visit.aggregate([
         { $match: matchFilter },
-        { $group: { _id: null, totalViews: { $sum: "$pageViewsCount" } } },
+        visitorIdentityStage,
+        { $group: { _id: '$visitorKey', totalViews: { $sum: '$pageViewsCount' }, isNew: { $max: '$isNewVisitor' } } },
       ]),
-      // Unique distinct visitors (devices)
-      Visit.distinct("visitorId", matchFilter),
-      // Unique distinct sessions
       Visit.distinct("sessionId", matchFilter),
-      // Distinct visitors who are marked as new in this timeframe
-      Visit.distinct("visitorId", { ...matchFilter, isNewVisitor: true }),
     ]);
 
-    const totalPageviews = pageviewsAgg[0]?.totalViews || uniqueVisitorIds.length;
-    const uniqueVisitors = uniqueVisitorIds.length;
+    const totalPageviews = visitorTotals.reduce((total, visitor) => total + visitor.totalViews, 0);
+    const uniqueVisitors = visitorTotals.length;
     const totalSessionsCount = totalSessions.length;
-    const newVisitorsCount = newVisitorIds.length;
-    const returningVisitorsCount = Math.max(0, uniqueVisitors - newVisitorsCount);
+    const newVisitorsCount = visitorTotals.filter(visitor => visitor.isNew).length;
+    const returningVisitorsCount = visitorTotals.filter(visitor => visitor.totalViews > 1).length;
 
     // 2. Traffic Sources Breakdown (by views & unique devices)
     const sourcesAgg = await Visit.aggregate([
       { $match: matchFilter },
+      visitorIdentityStage,
       {
         $group: {
           _id: "$source",
           views: { $sum: "$pageViewsCount" },
-          uniqueVisitors: { $addToSet: "$visitorId" },
+          uniqueVisitors: { $addToSet: "$visitorKey" },
         },
       },
       {
@@ -315,26 +302,27 @@ export const getAnalyticsSummary = async (req, res, next) => {
     let timelineGroupFormat;
     if (period === "24h") {
       timelineGroupFormat = {
-        year: { $year: "$createdAt" },
-        month: { $month: "$createdAt" },
-        day: { $dayOfMonth: "$createdAt" },
-        hour: { $hour: "$createdAt" },
+        year: { $year: { date: "$createdAt", timezone: "Africa/Lagos" } },
+        month: { $month: { date: "$createdAt", timezone: "Africa/Lagos" } },
+        day: { $dayOfMonth: { date: "$createdAt", timezone: "Africa/Lagos" } },
+        hour: { $hour: { date: "$createdAt", timezone: "Africa/Lagos" } },
       };
     } else {
       timelineGroupFormat = {
-        year: { $year: "$createdAt" },
-        month: { $month: "$createdAt" },
-        day: { $dayOfMonth: "$createdAt" },
+        year: { $year: { date: "$createdAt", timezone: "Africa/Lagos" } },
+        month: { $month: { date: "$createdAt", timezone: "Africa/Lagos" } },
+        day: { $dayOfMonth: { date: "$createdAt", timezone: "Africa/Lagos" } },
       };
     }
 
     const timelineAgg = await Visit.aggregate([
       { $match: matchFilter },
+      visitorIdentityStage,
       {
         $group: {
           _id: timelineGroupFormat,
           views: { $sum: "$pageViewsCount" },
-          visitors: { $addToSet: "$visitorId" },
+          visitors: { $addToSet: "$visitorKey" },
         },
       },
       {
@@ -356,17 +344,23 @@ export const getAnalyticsSummary = async (req, res, next) => {
       }
       return {
         label,
+        date: `${t._id.year}-${String(t._id.month).padStart(2, "0")}-${String(t._id.day).padStart(2, "0")}`,
         views: t.views,
         visitors: t.visitorsCount,
       };
     });
 
     // 7. Recent Visitor Stream (Latest 30 visitor sessions with pages browsed)
-    const recentVisits = await Visit.find(matchFilter)
-      .sort({ lastSeenAt: -1 })
-      .limit(30)
-      .populate("userId", "firstName lastName email role")
-      .lean();
+    const recentVisitorGroups = await Visit.aggregate([
+      { $match: matchFilter },
+      visitorIdentityStage,
+      { $sort: { lastSeenAt: -1, _id: -1 } },
+      { $group: { _id: '$visitorKey', latest: { $first: '$$ROOT' }, totalViews: { $sum: '$pageViewsCount' }, sessions: { $sum: 1 }, firstSeen: { $min: '$createdAt' } } },
+      { $sort: { 'latest.lastSeenAt': -1 } },
+      { $limit: 30 },
+      { $lookup: { from: 'users', localField: 'latest.userId', foreignField: '_id', pipeline: [{ $project: { firstName: 1, lastName: 1, email: 1, role: 1 } }], as: 'user' } },
+    ]);
+    const recentVisits = recentVisitorGroups.map(group => ({ ...group.latest, pageViewsCount: group.totalViews, sessionCount: group.sessions, firstSeenAt: group.firstSeen, userId: group.user[0] || null }));
 
     const formattedRecentVisits = recentVisits.map((v) => {
       const journey = Array.isArray(v.pagesVisited) && v.pagesVisited.length > 0
@@ -376,6 +370,8 @@ export const getAnalyticsSummary = async (req, res, next) => {
       return {
         id: v._id,
         visitorId: v.visitorId,
+        ip: normalizeVisitorIp(v.ip),
+        sessionCount: v.sessionCount,
         source: v.source,
         landingPage: v.landingPage || "/",
         currentPage: v.currentPage || v.path || v.landingPage || "/",
@@ -403,6 +399,8 @@ export const getAnalyticsSummary = async (req, res, next) => {
       period,
       summary: {
         totalPageviews,
+        totalViews: uniqueVisitors,
+        countingMethod: 'unique-ip',
         uniqueVisitors,
         totalSessions: totalSessionsCount,
         newVisitorsCount,
